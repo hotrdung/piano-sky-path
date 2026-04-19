@@ -50,6 +50,7 @@ import {
   Loader2,
   MessageCircleHeart,
   SendHorizontal,
+  Heart,
 } from "lucide-react";
 
 // --- Firebase Configuration ---
@@ -212,7 +213,7 @@ const App = () => {
   }, [showSettings, pins]);
 
   const fetchFullAudio = async (dayId) => {
-    if (!user) return null;
+    if (!user || dayId.startsWith("future")) return null;
     const chunksRef = collection(db, 'artifacts', appId, 'public', 'data', 'days', dayId, 'audioChunks');
     const snap = await getDocs(chunksRef);
     const chunks = snap.docs.map(d => d.data()).sort((a, b) => a.index - b.index).map(d => d.data);
@@ -371,49 +372,100 @@ const App = () => {
     } catch (err) {}
   };
 
+  const chunkAndUploadAudio = async (dayId, base64) => {
+    if (!base64) return;
+    const chunks = [];
+    for (let i = 0; i < base64.length; i += CHUNK_SIZE) {
+      chunks.push(base64.substring(i, i + CHUNK_SIZE));
+    }
+    for (let i = 0; i < chunks.length; i++) {
+      await addDoc(
+        collection(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "days",
+          dayId,
+          "audioChunks",
+        ),
+        { data: chunks[i], index: i, timestamp: Date.now() },
+      );
+    }
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "days", dayId),
+      { hasAudio: true },
+    );
+  };
+
   const handleFileUpload = async (e, dayId) => {
     const file = e.target.files[0];
     if (!file || !user) return;
+
     setIsUploading(true);
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = async () => {
       try {
         const base64 = reader.result;
-        const oldChunks = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'days', dayId, 'audioChunks'));
-        const deleteBatch = writeBatch(db);
-        oldChunks.forEach(chunkDoc => deleteBatch.delete(chunkDoc.ref));
-        await deleteBatch.commit();
-        const chunks = [];
-        for (let i = 0; i < base64.length; i += CHUNK_SIZE) {
-          chunks.push(base64.substring(i, i + CHUNK_SIZE));
-        }
-        for (let i = 0; i < chunks.length; i++) {
-          await addDoc(
-            collection(
-              db,
-              "artifacts",
-              appId,
-              "public",
-              "data",
-              "days",
-              dayId,
-              "audioChunks",
-            ),
-            { data: chunks[i], index: i, timestamp: Date.now() },
+
+        let targetId = dayId;
+        // If clicking a placeholder today cloud, create the record first
+        if (dayId.startsWith("future")) {
+          const newDayRef = await addDoc(
+            collection(db, "artifacts", appId, "public", "data", "days"),
+            {
+              goalId: goal.id,
+              dateString: selectedDay.dateString,
+              status: "completed",
+              timestamp: Date.now(),
+              hasAudio: false,
+            },
           );
+          targetId = newDayRef.id;
         }
-        await updateDoc(
-          doc(db, "artifacts", appId, "public", "data", "days", dayId),
-          { hasAudio: true },
+
+        const oldChunks = await getDocs(
+          collection(
+            db,
+            "artifacts",
+            appId,
+            "public",
+            "data",
+            "days",
+            targetId,
+            "audioChunks",
+          ),
         );
-        setFullAudioData(base64); playSoundEffect('success');
-      } catch (err) { console.error(err); } finally { setIsUploading(false); }
+        const deleteBatch = writeBatch(db);
+        oldChunks.forEach((chunkDoc) => deleteBatch.delete(chunkDoc.ref));
+        await deleteBatch.commit();
+
+        await chunkAndUploadAudio(targetId, base64);
+        setFullAudioData(base64);
+
+        // Update local state so UI refreshes correctly
+        if (selectedDay.id.startsWith("future")) {
+          setSelectedDay((prev) => ({
+            ...prev,
+            id: targetId,
+            status: "completed",
+            hasAudio: true,
+          }));
+        }
+
+        playSoundEffect("success");
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setIsUploading(false);
+      }
     };
   };
 
   const removeAudio = async (dayId) => {
-    if (role !== 'parent') return;
+    if (role !== "parent" || dayId.startsWith("future")) return;
     try {
       const chunks = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'days', dayId, 'audioChunks'));
       const batch = writeBatch(db);
@@ -498,30 +550,50 @@ const App = () => {
   };
 
   const { path, missedCount, daysRemaining, currentPotentialScore, daysToDeadline, todayStatus, todayStr } = useMemo(() => {
-    let level = 0; let missed = 0;
+    let level = 0;
+    let missed = 0;
     const target = goal ? goal.targetWeeks * 7 : 0;
     const tStr = new Date().toLocaleDateString();
     let currentStatus = null;
+
     const rawPath = days.map((d, i) => {
       if (d.dateString === tStr) currentStatus = d.status;
       if (d.status === "completed") level++;
       else missed++;
       return { ...d, type: "recorded" };
     });
-    const futureDays = []; const futureCount = Math.max(0, target - level);
+
+    const futureDays = [];
+    const futureCount = Math.max(0, target - level);
     for (let i = 1; i <= futureCount; i++) {
-      futureDays.push({ id: `future-${i}`, level: level + i, xOffset: 0, type: 'future' });
+      const futureDateObj = new Date(goal?.startDate || Date.now());
+      futureDateObj.setDate(futureDateObj.getDate() + (level + missed + i - 1));
+      futureDays.push({
+        id: `future-${i}`,
+        status: "future",
+        type: "future",
+        dateString: futureDateObj.toLocaleDateString(),
+        timestamp: futureDateObj.getTime(),
+      });
     }
+
     const combined = [...rawPath, ...futureDays];
     const finalPath = combined.map((item, idx) => {
-      const baseOffset = Math.sin(idx * 0.7) * 45; 
+      const baseOffset = Math.sin(idx * 0.7) * 45;
       const missedShift =
         item.status === "missed" ? (idx % 2 === 0 ? 50 : -50) : 0;
       return { ...item, xOffset: baseOffset + missedShift };
     });
-    const deadline = goal ? goal.startDate + (target * 24 * 60 * 60 * 1000) : 0;
+
+    const deadline = goal ? goal.startDate + target * 24 * 60 * 60 * 1000 : 0;
     const dLeft = Math.ceil((deadline - Date.now()) / (1000 * 60 * 60 * 24));
-    const score = goal ? Math.max(0, goal.originalScore - (Math.max(0, -dLeft) * (goal.latePenalty || 0))) : 0;
+    const score = goal
+      ? Math.max(
+          0,
+          goal.originalScore - Math.max(0, -dLeft) * (goal.latePenalty || 0),
+        )
+      : 0;
+
     return {
       path: finalPath,
       missedCount: missed,
@@ -603,7 +675,7 @@ const App = () => {
             <div className="bg-pink-400 p-2 rounded-lg text-white flex-shrink-0">
               <Music size={18} />
             </div>
-            <div className="leading-tight flex-1 overflow-hidden relative group">
+            <div className="leading-tight flex-1 min-w-0 overflow-hidden relative group">
               <div className="whitespace-nowrap marquee inline-block">
                 <h1 className="text-sm font-black text-pink-600 inline-block pr-8">
                   {goal.songName}
@@ -867,15 +939,15 @@ const App = () => {
               const isMissed = item.status === "missed";
               const hasAudio = item.hasAudio;
               const hasComment = !!item.comment;
-              const dateObj = new Date(
-                goal.startDate + idx * 24 * 60 * 60 * 1000,
-              );
-              const dateStrCompare = dateObj.toLocaleDateString();
+
+              const dateObj = new Date(item.timestamp);
+              const dateStrCompare = item.dateString;
               const dateStrDisplay = dateObj.toLocaleDateString("en-US", {
                 weekday: "short",
                 month: "short",
                 day: "numeric",
               });
+
               const isToday = dateStrCompare === todayStr;
               const isTodayHighlight = isToday && !todayStatus;
 
@@ -930,7 +1002,9 @@ const App = () => {
                   )}
 
                   <div
-                    onClick={() => !isFuture && setSelectedDay(item)}
+                    onClick={() =>
+                      (!isFuture || isTodayHighlight) && setSelectedDay(item)
+                    }
                     className={`relative cursor-pointer hover:scale-105 transition-transform ${isMissed ? "text-slate-400" : isTodayHighlight ? "text-yellow-400 animate-pulse" : isFuture ? "text-blue-200" : "text-pink-300"}`}
                   >
                     <Cloud
@@ -1119,7 +1193,7 @@ const App = () => {
         </div>
       )}
 
-      {/* Cloud Modal */}
+      {/* Day Detail Modal */}
       {selectedDay && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white rounded-[40px] p-8 w-full max-w-sm shadow-2xl border-8 border-pink-100 relative text-center max-h-[90vh] overflow-y-auto">
@@ -1138,62 +1212,62 @@ const App = () => {
 
             {role === "parent" && (
               <div className="space-y-4 mb-6">
-                {/* Rating Section */}
-                {isTodayOrYesterday(selectedDay.dateString) && (
-                  <div className="p-4 bg-yellow-50 rounded-3xl border-2 border-yellow-100">
-                    <p className="text-[10px] font-black text-yellow-600 uppercase mb-3 tracking-widest leading-none">
-                      Rate Practice
-                    </p>
-                    <div className="flex justify-center gap-3">
-                      {[1, 2, 3].map((num) => (
+                {isTodayOrYesterday(selectedDay.dateString) &&
+                  !selectedDay.id.startsWith("future") && (
+                    <div className="p-4 bg-yellow-50 rounded-3xl border-2 border-yellow-100">
+                      <p className="text-[10px] font-black text-yellow-600 uppercase mb-3 tracking-widest leading-none">
+                        Rate Practice
+                      </p>
+                      <div className="flex justify-center gap-3">
+                        {[1, 2, 3].map((num) => (
+                          <button
+                            key={num}
+                            onClick={() =>
+                              setRating(selectedDay.id, num.toString())
+                            }
+                            className={`p-2 rounded-xl transition-all ${selectedDay.rating === num.toString() ? "bg-yellow-400 text-white scale-110 shadow-md" : "bg-white text-yellow-400 hover:bg-yellow-100"}`}
+                          >
+                            <div className="flex gap-0.5">
+                              {[...Array(num)].map((_, i) => (
+                                <Star key={i} size={16} fill="currentColor" />
+                              ))}
+                            </div>
+                          </button>
+                        ))}
                         <button
-                          key={num}
-                          onClick={() =>
-                            setRating(selectedDay.id, num.toString())
-                          }
-                          className={`p-2 rounded-xl transition-all ${selectedDay.rating === num.toString() ? "bg-yellow-400 text-white scale-110 shadow-md" : "bg-white text-yellow-400 hover:bg-yellow-100"}`}
+                          onClick={() => setRating(selectedDay.id, "sad")}
+                          className={`p-2 rounded-xl transition-all ${selectedDay.rating === "sad" ? "bg-blue-400 text-white scale-110 shadow-md" : "bg-white text-blue-400 hover:bg-blue-100"}`}
                         >
-                          <div className="flex gap-0.5">
-                            {[...Array(num)].map((_, i) => (
-                              <Star key={i} size={16} fill="currentColor" />
-                            ))}
-                          </div>
+                          <CloudRain size={20} />
                         </button>
-                      ))}
+                      </div>
+                    </div>
+                  )}
+
+                {!selectedDay.id.startsWith("future") && (
+                  <div className="p-4 bg-pink-50 rounded-3xl border-2 border-pink-100">
+                    <p className="text-[10px] font-black text-pink-500 uppercase mb-3 tracking-widest leading-none flex items-center justify-center gap-2">
+                      <MessageCircleHeart size={14} /> Parent Cheer
+                    </p>
+                    <div className="relative">
+                      <textarea
+                        className="w-full p-3 pr-10 rounded-2xl bg-white border-2 border-pink-100 handwriting text-sm outline-none focus:border-pink-300 resize-none h-20"
+                        placeholder="Great job today! Love you!"
+                        value={commentInput}
+                        onChange={(e) => setCommentInput(e.target.value)}
+                      />
                       <button
-                        onClick={() => setRating(selectedDay.id, "sad")}
-                        className={`p-2 rounded-xl transition-all ${selectedDay.rating === "sad" ? "bg-blue-400 text-white scale-110 shadow-md" : "bg-white text-blue-400 hover:bg-blue-100"}`}
+                        onClick={saveFeedback}
+                        className="absolute bottom-2 right-2 p-2 bg-pink-400 text-white rounded-xl shadow-md hover:bg-pink-500 transition-all"
                       >
-                        <CloudRain size={20} />
+                        <SendHorizontal size={16} />
                       </button>
                     </div>
                   </div>
                 )}
-
-                {/* Encouragement Input */}
-                <div className="p-4 bg-pink-50 rounded-3xl border-2 border-pink-100">
-                  <p className="text-[10px] font-black text-pink-500 uppercase mb-3 tracking-widest leading-none flex items-center justify-center gap-2">
-                    <MessageCircleHeart size={14} /> Parent Cheer
-                  </p>
-                  <div className="relative">
-                    <textarea
-                      className="w-full p-3 pr-10 rounded-2xl bg-white border-2 border-pink-100 handwriting text-sm outline-none focus:border-pink-300 resize-none h-20"
-                      placeholder="Great job today! Love you!"
-                      value={commentInput}
-                      onChange={(e) => setCommentInput(e.target.value)}
-                    />
-                    <button
-                      onClick={saveFeedback}
-                      className="absolute bottom-2 right-2 p-2 bg-pink-400 text-white rounded-xl shadow-md hover:bg-pink-500 transition-all"
-                    >
-                      <SendHorizontal size={16} />
-                    </button>
-                  </div>
-                </div>
               </div>
             )}
 
-            {/* Girl's view of the comment */}
             {role === "girl" && selectedDay.comment && (
               <div className="mb-6 p-5 bg-pink-50 rounded-[32px] border-2 border-pink-100 italic">
                 <p className="handwriting text-pink-600 text-lg leading-relaxed">
@@ -1233,12 +1307,12 @@ const App = () => {
               <div className="bg-slate-50 p-10 rounded-[32px] border-2 border-dashed border-slate-200 flex flex-col items-center gap-4">
                 <Music size={48} className="text-slate-200" />
                 <p className="text-sm font-bold text-slate-400 italic text-balance">
-                  No recording for this cloud yet.
+                  No recording yet!
                 </p>
               </div>
             )}
 
-            {role === "girl" && (
+            {role === "girl" && isTodayOrYesterday(selectedDay.dateString) && (
               <div className="mt-6">
                 <label
                   className={`w-full py-4 rounded-2xl font-black flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg ${isUploading ? "bg-slate-100 text-slate-400" : "bg-pink-500 text-white hover:bg-pink-600 active:scale-95"}`}
@@ -1248,7 +1322,7 @@ const App = () => {
                   ) : (
                     <Mic size={20} />
                   )}
-                  {fullAudioData ? "UPDATE YOUR MUSIC" : "SHARE YOUR PRACTICE"}
+                  {fullAudioData ? "CHANGE PERFORMANCE" : "SHARE PERFORMANCE"}
                   <input
                     type="file"
                     accept="audio/*"
@@ -1274,7 +1348,6 @@ const App = () => {
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&display=swap');
-        
         .handwriting { font-family: 'Caveat', cursive; }
         
         @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
@@ -1295,24 +1368,19 @@ const App = () => {
         
         @keyframes cry-sad { 
           0%, 100% { transform: translateX(0) rotate(0); } 
-          10%, 30%, 50%, 70%, 90% { transform: translateX(-4px) rotate(-2deg); } 
-          20%, 40%, 60%, 80% { transform: translateX(4px) rotate(2deg); } 
+          20% { transform: translateX(-4px) rotate(-2deg); } 
+          40% { transform: translateX(4px) rotate(2deg); } 
+          60% { transform: translateX(-4px) rotate(-2deg); } 
+          80% { transform: translateX(4px) rotate(2deg); } 
         }
 
-        @keyframes marquee {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
-
-        .marquee {
-          display: inline-block;
-          animation: marquee 12s linear infinite;
-        }
+        @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+        .marquee { display: inline-block; animation: marquee 12s linear infinite; }
         
         .float-up { animation: float-up linear infinite; }
         .twinkle { animation: twinkle ease-in-out infinite; animation-duration: var(--twinkle-dur, 2s); }
         .cat-fly-happy { animation: jump-happy 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
-        .cat-quiver-sad { animation: cry-sad 0.3s linear infinite; }
+        .cat-quiver-sad { animation: cry-sad 0.2s linear infinite; }
         
         .flex { display: flex; }
         .flex-col { flex-direction: column; }
