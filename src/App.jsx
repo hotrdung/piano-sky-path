@@ -395,7 +395,7 @@ const App = () => {
     }
     await updateDoc(
       doc(db, "artifacts", appId, "public", "data", "days", dayId),
-      { hasAudio: true },
+      { hasAudio: true, status: "completed" },
     );
   };
 
@@ -475,13 +475,31 @@ const App = () => {
     } catch (err) {}
   };
 
-  const exportData = () => {
-    const data = { goal, days, pins, exportedAt: new Date().toISOString() };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url; link.download = `piano_backup_${goal?.songName || 'practice'}.json`;
-    link.click();
+  const exportData = async () => {
+    setIsAssembling(true);
+    try {
+      const daysWithAudio = await Promise.all(
+        days.map(async (day) => {
+          if (day.hasAudio) {
+            const audioData = await fetchFullAudio(day.id);
+            return { ...day, audioData };
+          }
+          return day;
+        })
+      );
+      const data = { goal, days: daysWithAudio, pins, exportedAt: new Date().toISOString() };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = `piano_backup_${goal?.songName || 'practice'}.json`;
+      link.click();
+      playSoundEffect('success');
+    } catch (err) {
+      console.error(err);
+      playSoundEffect('fail');
+    } finally {
+      setIsAssembling(false);
+    }
   };
 
   const importData = (e) => {
@@ -1312,7 +1330,7 @@ const App = () => {
               </div>
             )}
 
-            {role === "girl" && isTodayOrYesterday(selectedDay.dateString) && (
+            {role === "girl" && !goal?.completed && (
               <div className="mt-6">
                 <label
                   className={`w-full py-4 rounded-2xl font-black flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg ${isUploading ? "bg-slate-100 text-slate-400" : "bg-pink-500 text-white hover:bg-pink-600 active:scale-95"}`}
