@@ -1,25 +1,29 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getFirestore, 
-  collection, 
-  doc, 
-  setDoc, 
-  onSnapshot, 
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from "react";
+import { initializeApp } from "firebase/app";
+import {
+  getFirestore,
+  collection,
+  doc,
+  onSnapshot,
   addDoc,
   deleteDoc,
   updateDoc,
   writeBatch,
   getDocs,
-  query,
-  orderBy
-} from 'firebase/firestore';
-import { 
-  getAuth, 
-  signInAnonymously, 
-  signInWithCustomToken, 
-  onAuthStateChanged 
-} from 'firebase/auth';
+} from "firebase/firestore";
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut,
+} from "firebase/auth";
 import {
   Music,
   Cloud,
@@ -51,27 +55,104 @@ import {
   MessageCircleHeart,
   SendHorizontal,
   Heart,
+  Guitar,
+  Ghost,
 } from "lucide-react";
+
+// --- Theme Configuration ---
+const THEMES = {
+  "girl-piano": {
+    primary: "pink",
+    character: Cat,
+    instrument: Music,
+    colors: {
+      bg: "bg-pink-100",
+      bg50: "bg-pink-50",
+      border: "border-pink-200",
+      border100: "border-pink-100",
+      text: "text-pink-600",
+      text400: "text-pink-400",
+      text500: "text-pink-500",
+      btn: "bg-pink-500",
+      btnHover: "hover:bg-pink-600",
+      btn400: "bg-pink-400",
+      btn400Hover: "hover:bg-pink-500",
+      cloud: "text-pink-300",
+      ring: "ring-pink-200",
+      accent: "#fce4ec",
+      shadow: "shadow-pink-200",
+      modalBorder: "border-pink-100",
+    },
+  },
+  "boy-guitar": {
+    primary: "yellow",
+    character: Ghost,
+    instrument: Guitar,
+    colors: {
+      bg: "bg-yellow-100",
+      bg50: "bg-yellow-50",
+      border: "border-yellow-200",
+      border100: "border-yellow-100",
+      text: "text-yellow-600",
+      text400: "text-yellow-400",
+      text500: "text-yellow-500",
+      btn: "bg-yellow-500",
+      btnHover: "hover:bg-yellow-600",
+      btn400: "bg-yellow-400",
+      btn400Hover: "hover:bg-yellow-500",
+      cloud: "text-yellow-300",
+      ring: "ring-yellow-200",
+      accent: "#fef3c7",
+      shadow: "shadow-yellow-200",
+      modalBorder: "border-yellow-100",
+    },
+  },
+};
+
+// --- Configured Gmails ---
+const ALLOWED_USERS = {
+  "jennykhanhan16@gmail.com@gmail.com": { name: "Mei", theme: "girl-piano", role: "girl" },
+  "holeduytoan@gmail.com": { name: "Pony", theme: "boy-guitar", role: "girl" },
+  "trdung87@gmail.com": {
+    name: "Admin",
+    role: "parent",
+    kids: ["jennykhanhan16@gmail.com", "holeduytoan@gmail.com"],
+  },
+  "hotrdung@gmail.com": {
+    name: "Dad",
+    role: "parent",
+    kids: ["jennykhanhan16@gmail.com", "holeduytoan@gmail.com"],
+  },
+  "kimxuyentd@gmail.com": {
+    name: "Mom",
+    role: "parent",
+    kids: ["jennykhanhan16@gmail.com", "holeduytoan@gmail.com"],
+  },
+};
 
 // --- Firebase Configuration ---
 // Prioritizes environment variables for secure Git deployments
-const firebaseConfig = (import.meta.env && import.meta.env.VITE_FIREBASE_API_KEY) 
-  ? {
-      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-      appId: import.meta.env.VITE_FIREBASE_APP_ID,
-    }
-  : (typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {});
+const firebaseConfig =
+  import.meta.env && import.meta.env.VITE_FIREBASE_API_KEY
+    ? {
+        apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+        authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+        projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+        storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+        messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+        appId: import.meta.env.VITE_FIREBASE_APP_ID,
+      }
+    : typeof __firebase_config !== "undefined"
+      ? JSON.parse(__firebase_config)
+      : {};
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'piano-climber-production';
+const appId =
+  typeof __app_id !== "undefined" ? __app_id : "piano-climber-production";
 
-const CHUNK_SIZE = 800000; 
+const CHUNK_SIZE = 800000;
 
 const playSoundEffect = (type) => {
   try {
@@ -80,16 +161,16 @@ const playSoundEffect = (type) => {
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
-    if (type === 'success') {
-      osc.type = 'sine';
+    if (type === "success") {
+      osc.type = "sine";
       osc.frequency.setValueAtTime(523.25, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(1046.50, ctx.currentTime + 0.3);
+      osc.frequency.exponentialRampToValueAtTime(1046.5, ctx.currentTime + 0.3);
       gain.gain.setValueAtTime(0.1, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
       osc.start();
       osc.stop(ctx.currentTime + 0.3);
-    } else if (type === 'fail') {
-      osc.type = 'sawtooth';
+    } else if (type === "fail") {
+      osc.type = "sawtooth";
       osc.frequency.setValueAtTime(150, ctx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(50, ctx.currentTime + 0.4);
       gain.gain.setValueAtTime(0.1, ctx.currentTime);
@@ -102,75 +183,98 @@ const playSoundEffect = (type) => {
 
 const App = () => {
   const [user, setUser] = useState(null);
-  const [role, setRole] = useState(null); 
-  const [pinInput, setPinInput] = useState('');
-  const [pins, setPins] = useState({ girl: '1111', parent: '9999', girlName: 'Little Pianist' });
+  const [userConfig, setUserConfig] = useState(null);
+  const [role, setRole] = useState(null);
   const [goal, setGoal] = useState(null);
   const [days, setDays] = useState([]);
   const [loading, setLoading] = useState(true);
   const [effect, setEffect] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [confirmState, setConfirmState] = useState(null);
-  const [catMood, setCatMood] = useState('normal'); 
+  const [catMood, setCatMood] = useState("normal");
   const [isMuted, setIsMuted] = useState(false);
   const [selectedDay, setSelectedDay] = useState(null);
   const [fullAudioData, setFullAudioData] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isAssembling, setIsAssembling] = useState(false);
   const [commentInput, setCommentInput] = useState("");
-  
-  const [editGoalName, setEditGoalName] = useState('');
+
+  const [editGoalName, setEditGoalName] = useState("");
   const [editWeeks, setEditWeeks] = useState(4);
   const [editScore, setEditScore] = useState(100);
   const [editPenalty, setEditPenalty] = useState(5);
-  const [editGirlName, setEditGirlName] = useState('');
-  const [editGirlPin, setEditGirlPin] = useState('');
-  const [editParentPin, setEditParentPin] = useState('');
+  const [editKidName, setEditKidName] = useState("");
 
   const currentCloudRef = useRef(null);
   const audioPlayer = useRef(new Audio());
 
+  const [selectedKidEmail, setSelectedKidEmail] = useState(null);
+
+  const selectedKidConfig = useMemo(() => {
+    if (!selectedKidEmail) return null;
+    return ALLOWED_USERS[selectedKidEmail];
+  }, [selectedKidEmail]);
+
+  const currentTheme = useMemo(() => {
+    const config = role === "parent" ? selectedKidConfig : userConfig;
+    return THEMES[config?.theme] || THEMES["girl-piano"];
+  }, [role, selectedKidConfig, userConfig]);
+
+  const storageKey = useMemo(() => {
+    if (!user?.email) return null;
+    const email = user.email.toLowerCase();
+    const config = ALLOWED_USERS[email];
+    if (config?.role === "parent") {
+      return selectedKidEmail ? selectedKidEmail.replace(/[@.]/g, "_") : null;
+    }
+    return email.replace(/[@.]/g, "_");
+  }, [user, selectedKidEmail]);
+
   useEffect(() => {
-    if (!document.getElementById('tailwind-cdn')) {
-      const script = document.createElement('script');
-      script.id = 'tailwind-cdn';
-      script.src = 'https://cdn.tailwindcss.com';
+    if (!document.getElementById("tailwind-cdn")) {
+      const script = document.createElement("script");
+      script.id = "tailwind-cdn";
+      script.src = "https://cdn.tailwindcss.com";
       document.head.appendChild(script);
     }
   }, []);
 
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (
-          typeof __initial_auth_token !== "undefined" &&
-          __initial_auth_token
-        ) {
-          await signInWithCustomToken(auth, __initial_auth_token);
+    return onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      if (u?.email) {
+        const config = ALLOWED_USERS[u.email.toLowerCase()];
+        if (config) {
+          setUserConfig(config);
+          setRole(config.role);
+          setEditKidName(config.name);
+          if (config.role === "parent" && config.kids?.length > 0) {
+            setSelectedKidEmail(config.kids[0]);
+          }
         } else {
-          await signInAnonymously(auth);
+          setUserConfig(null);
+          setRole(null);
+          signOut(auth);
         }
-      } catch (err) {
-        console.error(err);
+      } else {
+        setUserConfig(null);
+        setRole(null);
       }
-    };
-    initAuth();
-    return onAuthStateChanged(auth, setUser);
+    });
   }, []);
 
   useEffect(() => {
-    if (!user) return;
-    const pinsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'auth');
-    const unsubPins = onSnapshot(pinsRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setPins({ ...data, girlName: data.girlName || 'Little Pianist' });
-      } else {
-        setDoc(pinsRef, { girl: '1111', parent: '9999', girlName: 'Little Pianist' });
-      }
-    });
+    if (!user || !storageKey) return;
+    setLoading(true);
 
-    const goalRef = collection(db, 'artifacts', appId, 'public', 'data', 'goals');
+    const goalRef = collection(
+      db,
+      "artifacts",
+      appId,
+      "users",
+      storageKey,
+      "goals",
+    );
     const unsubGoal = onSnapshot(goalRef, (snap) => {
       if (!snap.empty) {
         const goalData = { id: snap.docs[0].id, ...snap.docs[0].data() };
@@ -179,18 +283,25 @@ const App = () => {
         setEditWeeks(goalData.targetWeeks);
         setEditScore(goalData.originalScore);
         setEditPenalty(goalData.latePenalty || 5);
-        
-        const daysRef = collection(db, 'artifacts', appId, 'public', 'data', 'days');
+
+        const daysRef = collection(
+          db,
+          "artifacts",
+          appId,
+          "users",
+          storageKey,
+          "days",
+        );
         const unsubDays = onSnapshot(daysRef, (daySnap) => {
           const list = daySnap.docs
-            .map(d => ({ id: d.id, ...d.data() }))
-            .filter(d => d.goalId === goalData.id)
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .filter((d) => d.goalId === goalData.id)
             .sort((a, b) => a.timestamp - b.timestamp);
           setDays(list);
           if (list.length > 0) {
             const lastEntry = list[list.length - 1];
-            if (lastEntry.status === 'missed') setCatMood('sad');
-            else setCatMood('normal');
+            if (lastEntry.status === "missed") setCatMood("sad");
+            else setCatMood("normal");
           }
           setLoading(false);
         });
@@ -201,24 +312,37 @@ const App = () => {
         setLoading(false);
       }
     });
-    return () => { unsubPins(); unsubGoal(); };
-  }, [user]);
+    return () => unsubGoal();
+  }, [user, storageKey]);
 
   useEffect(() => {
-    if (showSettings) {
-      setEditGirlName(pins.girlName);
-      setEditGirlPin(pins.girl);
-      setEditParentPin(pins.parent);
+    if (showSettings && userConfig) {
+      setEditKidName(userConfig.name);
     }
-  }, [showSettings, pins]);
+  }, [showSettings, userConfig]);
 
-  const fetchFullAudio = async (dayId) => {
-    if (!user || dayId.startsWith("future")) return null;
-    const chunksRef = collection(db, 'artifacts', appId, 'public', 'data', 'days', dayId, 'audioChunks');
-    const snap = await getDocs(chunksRef);
-    const chunks = snap.docs.map(d => d.data()).sort((a, b) => a.index - b.index).map(d => d.data);
-    return chunks.join('');
-  };
+  const fetchFullAudio = useCallback(
+    async (dayId) => {
+      if (!user || !storageKey || dayId.startsWith("future")) return null;
+      const chunksRef = collection(
+        db,
+        "artifacts",
+        appId,
+        "users",
+        storageKey,
+        "days",
+        dayId,
+        "audioChunks",
+      );
+      const snap = await getDocs(chunksRef);
+      const chunks = snap.docs
+        .map((d) => d.data())
+        .sort((a, b) => a.index - b.index)
+        .map((d) => d.data);
+      return chunks.join("");
+    },
+    [user, storageKey],
+  );
 
   useEffect(() => {
     const triggerAutoPlay = async () => {
@@ -233,14 +357,16 @@ const App = () => {
               audioPlayer.current.loop = true;
               await audioPlayer.current.play();
             }
-          } catch (err) {}
+          } catch {
+            // ignore
+          }
         }
       } else {
         audioPlayer.current.pause();
       }
     };
     triggerAutoPlay();
-  }, [loading, days, isMuted, role]);
+  }, [loading, days, isMuted, role, fetchFullAudio]);
 
   useEffect(() => {
     if (selectedDay?.hasAudio) {
@@ -255,25 +381,34 @@ const App = () => {
     if (selectedDay) {
       setCommentInput(selectedDay.comment || "");
     }
-  }, [selectedDay]);
+  }, [selectedDay, fetchFullAudio]);
 
   useEffect(() => {
     if (!goal || loading || !user || goal.completed) return;
     const checkAutoMissed = async () => {
-      const today = new Date(); today.setHours(0,0,0,0);
-      const startDate = new Date(goal.startDate); startDate.setHours(0,0,0,0);
-      const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const startDate = new Date(goal.startDate);
+      startDate.setHours(0, 0, 0, 0);
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
       let currentCheck = new Date(startDate);
       const batch = writeBatch(db);
       let updatesNeeded = false;
       while (currentCheck <= yesterday) {
         const dateStr = currentCheck.toLocaleDateString();
-        const exists = days.find(d => d.dateString === dateStr);
+        const exists = days.find((d) => d.dateString === dateStr);
         if (!exists) {
-          const newDayRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'days'));
+          const newDayRef = doc(
+            collection(db, "artifacts", appId, "users", storageKey, "days"),
+          );
           batch.set(newDayRef, {
-            goalId: goal.id, status: 'missed', timestamp: currentCheck.getTime(),
-            dateString: dateStr, autoMarked: true, hasAudio: false
+            goalId: goal.id,
+            status: "missed",
+            timestamp: currentCheck.getTime(),
+            dateString: dateStr,
+            autoMarked: true,
+            hasAudio: false,
           });
           updatesNeeded = true;
         }
@@ -281,95 +416,152 @@ const App = () => {
       }
       if (updatesNeeded) await batch.commit();
     };
-    const timer = setTimeout(checkAutoMissed, 3000); 
+    const timer = setTimeout(checkAutoMissed, 3000);
     return () => clearTimeout(timer);
-  }, [goal, days, loading, user]);
+  }, [goal, days, loading, user, storageKey]);
 
   useEffect(() => {
     if (goal && !loading) {
       const timer = setTimeout(() => {
         if (currentCloudRef.current) {
-          currentCloudRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          currentCloudRef.current.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+          });
         }
       }, 1200);
       return () => clearTimeout(timer);
     }
   }, [loading, goal, days.length, role]);
 
-  const handleLogin = () => {
-    const currentInput = pinInput;
-    setPinInput('');
-    if (currentInput === pins.girl || currentInput === pins.parent) {
-      setRole(currentInput === pins.girl ? "girl" : "parent");
-    } else {
-      playSoundEffect("fail");
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch {
+      console.error(err);
     }
   };
 
   const handleLogout = () => {
-    setRole(null); setPinInput(''); setCatMood('normal');
+    signOut(auth);
+    setRole(null);
+    setSelectedKidEmail(null);
+    setCatMood("normal");
     audioPlayer.current.pause();
   };
 
   const saveConfig = async () => {
-    if (!user || role !== 'parent') return;
+    if (!user || role !== "parent" || !storageKey) return;
     try {
-      const pinsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'auth');
-      await updateDoc(pinsRef, { girl: editGirlPin, parent: editParentPin, girlName: editGirlName });
       if (goal) {
-        const goalRef = doc(db, 'artifacts', appId, 'public', 'data', 'goals', goal.id);
-        await updateDoc(goalRef, { songName: editGoalName, targetWeeks: parseInt(editWeeks), originalScore: parseInt(editScore), latePenalty: parseInt(editPenalty) });
+        const goalRef = doc(
+          db,
+          "artifacts",
+          appId,
+          "users",
+          storageKey,
+          "goals",
+          goal.id,
+        );
+        await updateDoc(goalRef, {
+          songName: editGoalName,
+          targetWeeks: parseInt(editWeeks),
+          originalScore: parseInt(editScore),
+          latePenalty: parseInt(editPenalty),
+        });
       }
-      playSoundEffect('success'); setShowSettings(false);
-    } catch (err) { playSoundEffect('fail'); }
+      playSoundEffect("success");
+      setShowSettings(false);
+    } catch {
+      playSoundEffect("fail");
+    }
   };
 
   const saveFeedback = async () => {
-    if (role !== "parent" || !selectedDay) return;
+    if (role !== "parent" || !selectedDay || !storageKey) return;
     try {
       await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "days", selectedDay.id),
+        doc(
+          db,
+          "artifacts",
+          appId,
+          "users",
+          storageKey,
+          "days",
+          selectedDay.id,
+        ),
         {
           comment: commentInput,
         },
       );
       playSoundEffect("success");
       setSelectedDay({ ...selectedDay, comment: commentInput });
-    } catch (err) {
-      console.error(err);
+    } catch {
+      // ignore
     }
   };
 
   const setRating = async (dayId, rating) => {
-    if (role !== 'parent') return;
+    if (role !== "parent" || !storageKey) return;
     try {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'days', dayId), { rating });
-      playSoundEffect('success');
+      await updateDoc(
+        doc(db, "artifacts", appId, "users", storageKey, "days", dayId),
+        { rating },
+      );
+      playSoundEffect("success");
       if (selectedDay?.id === dayId) {
         setSelectedDay({ ...selectedDay, rating });
       }
-    } catch (err) { console.error(err); }
+    } catch {
+      console.error(err);
+    }
   };
 
   const logPractice = async (status) => {
     if (!user || !goal || goal.completed) return;
     const todayStr = new Date().toLocaleDateString();
-    setEffect(status === 'completed' ? 'sparkle' : 'rain');
-    setCatMood(status === 'completed' ? 'happy' : 'sad');
-    playSoundEffect(status === 'completed' ? 'success' : 'fail');
-    if (status === 'completed') {
-      setTimeout(() => { setEffect(null); setCatMood('normal'); }, 4000);
+    setEffect(status === "completed" ? "sparkle" : "rain");
+    setCatMood(status === "completed" ? "happy" : "sad");
+    playSoundEffect(status === "completed" ? "success" : "fail");
+    if (status === "completed") {
+      setTimeout(() => {
+        setEffect(null);
+        setCatMood("normal");
+      }, 4000);
     } else {
       setTimeout(() => setEffect(null), 3000);
     }
     try {
-      const existingEntry = days.find(d => d.dateString === todayStr);
+      const existingEntry = days.find((d) => d.dateString === todayStr);
       if (existingEntry) {
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'days', existingEntry.id), { status, timestamp: Date.now() });
+        await updateDoc(
+          doc(
+            db,
+            "artifacts",
+            appId,
+            "users",
+            storageKey,
+            "days",
+            existingEntry.id,
+          ),
+          { status, timestamp: Date.now() },
+        );
       } else {
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'days'), { goalId: goal.id, status, timestamp: Date.now(), dateString: todayStr, hasAudio: false });
+        await addDoc(
+          collection(db, "artifacts", appId, "users", storageKey, "days"),
+          {
+            goalId: goal.id,
+            status,
+            timestamp: Date.now(),
+            dateString: todayStr,
+            hasAudio: false,
+          },
+        );
       }
-    } catch (err) {}
+    } catch {
+      // ignore
+    }
   };
 
   const chunkAndUploadAudio = async (dayId, base64) => {
@@ -384,8 +576,8 @@ const App = () => {
           db,
           "artifacts",
           appId,
-          "public",
-          "data",
+          "users",
+          storageKey,
           "days",
           dayId,
           "audioChunks",
@@ -394,7 +586,7 @@ const App = () => {
       );
     }
     await updateDoc(
-      doc(db, "artifacts", appId, "public", "data", "days", dayId),
+      doc(db, "artifacts", appId, "users", storageKey, "days", dayId),
       { hasAudio: true, status: "completed" },
     );
   };
@@ -414,7 +606,7 @@ const App = () => {
         // If clicking a placeholder today cloud, create the record first
         if (dayId.startsWith("future")) {
           const newDayRef = await addDoc(
-            collection(db, "artifacts", appId, "public", "data", "days"),
+            collection(db, "artifacts", appId, "users", storageKey, "days"),
             {
               goalId: goal.id,
               dateString: selectedDay.dateString,
@@ -431,8 +623,8 @@ const App = () => {
             db,
             "artifacts",
             appId,
-            "public",
-            "data",
+            "users",
+            storageKey,
             "days",
             targetId,
             "audioChunks",
@@ -456,7 +648,7 @@ const App = () => {
         }
 
         playSoundEffect("success");
-      } catch (err) {
+      } catch {
         console.error(err);
       } finally {
         setIsUploading(false);
@@ -465,14 +657,32 @@ const App = () => {
   };
 
   const removeAudio = async (dayId) => {
-    if (role !== "parent" || dayId.startsWith("future")) return;
+    if (role !== "parent" || dayId.startsWith("future") || !storageKey) return;
     try {
-      const chunks = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'days', dayId, 'audioChunks'));
+      const chunks = await getDocs(
+        collection(
+          db,
+          "artifacts",
+          appId,
+          "users",
+          storageKey,
+          "days",
+          dayId,
+          "audioChunks",
+        ),
+      );
       const batch = writeBatch(db);
-      chunks.forEach(c => batch.delete(c.ref));
-      batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'days', dayId), { hasAudio: false });
-      await batch.commit(); setFullAudioData(null); playSoundEffect('success');
-    } catch (err) {}
+      chunks.forEach((c) => batch.delete(c.ref));
+      batch.update(
+        doc(db, "artifacts", appId, "users", storageKey, "days", dayId),
+        { hasAudio: false },
+      );
+      await batch.commit();
+      setFullAudioData(null);
+      playSoundEffect("success");
+    } catch {
+      // ignore
+    }
   };
 
   const exportData = async () => {
@@ -485,18 +695,25 @@ const App = () => {
             return { ...day, audioData };
           }
           return day;
-        })
+        }),
       );
-      const data = { goal, days: daysWithAudio, pins, exportedAt: new Date().toISOString() };
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const data = {
+        goal,
+        days: daysWithAudio,
+        exportedAt: new Date().toISOString(),
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json",
+      });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url; link.download = `piano_backup_${goal?.songName || 'practice'}.json`;
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `piano_backup_${goal?.songName || "practice"}.json`;
       link.click();
-      playSoundEffect('success');
-    } catch (err) {
+      playSoundEffect("success");
+    } catch {
       console.error(err);
-      playSoundEffect('fail');
+      playSoundEffect("fail");
     } finally {
       setIsAssembling(false);
     }
@@ -513,61 +730,125 @@ const App = () => {
         setLoading(true);
         const batch = writeBatch(db);
         if (goal) {
-          batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'goals', goal.id));
-          days.forEach(d => batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'days', d.id)));
+          batch.delete(
+            doc(db, "artifacts", appId, "users", storageKey, "goals", goal.id),
+          );
+          days.forEach((d) =>
+            batch.delete(
+              doc(db, "artifacts", appId, "users", storageKey, "days", d.id),
+            ),
+          );
         }
-        if (data.pins) batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'auth'), data.pins);
         const { id: oldGoalId, ...goalToImport } = data.goal;
-        const newGoalRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'goals'));
+        const newGoalRef = doc(
+          collection(db, "artifacts", appId, "users", storageKey, "goals"),
+        );
         batch.set(newGoalRef, goalToImport);
         await batch.commit();
         for (const day of data.days) {
           const { id: oldDayId, audioData: oldAudioData, ...dayToImport } = day;
-          const dayRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'days'), { ...dayToImport, goalId: newGoalRef.id, hasAudio: !!oldAudioData });
+          const dayRef = await addDoc(
+            collection(db, "artifacts", appId, "users", storageKey, "days"),
+            { ...dayToImport, goalId: newGoalRef.id, hasAudio: !!oldAudioData },
+          );
           if (oldAudioData) {
             const chunks = [];
-            for (let i = 0; i < oldAudioData.length; i += CHUNK_SIZE) { chunks.push(oldAudioData.substring(i, i + CHUNK_SIZE)); }
+            for (let i = 0; i < oldAudioData.length; i += CHUNK_SIZE) {
+              chunks.push(oldAudioData.substring(i, i + CHUNK_SIZE));
+            }
             for (let i = 0; i < chunks.length; i++) {
-              await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'days', dayRef.id, 'audioChunks'), { data: chunks[i], index: i, timestamp: Date.now() });
+              await addDoc(
+                collection(
+                  db,
+                  "artifacts",
+                  appId,
+                  "users",
+                  storageKey,
+                  "days",
+                  dayRef.id,
+                  "audioChunks",
+                ),
+                { data: chunks[i], index: i, timestamp: Date.now() },
+              );
             }
           }
         }
-        playSoundEffect('success'); setRole(null);
-      } catch (err) { playSoundEffect('fail'); } finally { setLoading(false); }
+        playSoundEffect("success");
+        setRole(null);
+      } catch {
+        playSoundEffect("fail");
+      } finally {
+        setLoading(false);
+      }
     };
     reader.readAsText(file);
   };
 
   const resetEverything = async () => {
-    if (!user || role !== 'parent' || !goal) return;
+    if (!user || role !== "parent" || !goal || !storageKey) return;
     try {
       const batch = writeBatch(db);
-      batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'goals', goal.id));
-      days.forEach(day => batch.delete(doc(db, 'artifacts', appId, 'public', 'data', 'days', day.id)));
+      batch.delete(
+        doc(db, "artifacts", appId, "users", storageKey, "goals", goal.id),
+      );
+      days.forEach((day) =>
+        batch.delete(
+          doc(db, "artifacts", appId, "users", storageKey, "days", day.id),
+        ),
+      );
       await batch.commit();
-      setGoal(null); setDays([]); setConfirmState(null); setCatMood('normal'); audioPlayer.current.pause(); playSoundEffect('success');
-    } catch (err) { playSoundEffect('fail'); }
+      setGoal(null);
+      setDays([]);
+      setConfirmState(null);
+      setCatMood("normal");
+      audioPlayer.current.pause();
+      playSoundEffect("success");
+    } catch {
+      playSoundEffect("fail");
+    }
   };
 
   const resetToday = async () => {
-    if (!user || role !== 'parent') return;
+    if (!user || role !== "parent" || !storageKey) return;
     const todayStr = new Date().toLocaleDateString();
-    const todayDoc = days.find(d => d.dateString === todayStr);
+    const todayDoc = days.find((d) => d.dateString === todayStr);
     if (todayDoc) {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'days', todayDoc.id));
-      setCatMood('normal'); playSoundEffect('success');
+      await deleteDoc(
+        doc(db, "artifacts", appId, "users", storageKey, "days", todayDoc.id),
+      );
+      setCatMood("normal");
+      playSoundEffect("success");
     }
   };
 
   const finalizeGoal = async () => {
-    if (!user || !goal || role !== 'parent') return;
+    if (!user || !goal || role !== "parent" || !storageKey) return;
     try {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'goals', goal.id), { completed: true, completedAt: Date.now(), finalScore: currentPotentialScore });
-      setEffect('sparkle'); setConfirmState(null); playSoundEffect('success');
-    } catch (err) { playSoundEffect('fail'); }
+      await updateDoc(
+        doc(db, "artifacts", appId, "users", storageKey, "goals", goal.id),
+        {
+          completed: true,
+          completedAt: Date.now(),
+          finalScore: currentPotentialScore,
+        },
+      );
+      setEffect("sparkle");
+      setConfirmState(null);
+      playSoundEffect("success");
+    } catch {
+      playSoundEffect("fail");
+    }
   };
 
-  const { path, missedCount, daysRemaining, currentPotentialScore, daysToDeadline, todayStatus, todayStr } = useMemo(() => {
+  const {
+    path,
+    missedCount,
+    daysRemaining,
+    currentPotentialScore,
+    daysToDeadline,
+    todayStatus,
+    todayStr,
+  } = useMemo(() => {
     let level = 0;
     let missed = 0;
     const target = goal ? goal.targetWeeks * 7 : 0;
@@ -624,45 +905,140 @@ const App = () => {
   }, [days, goal]);
 
   const backgroundItems = useMemo(() => {
-    const items = []; const colors = ['#ffb7b2', '#ffdac1', '#e2f0cb', '#b5ead7', '#c7ceea', '#dec3ff', '#fff4bd'];
+    const items = [];
+    const colors = [
+      "#ffb7b2",
+      "#ffdac1",
+      "#e2f0cb",
+      "#b5ead7",
+      "#c7ceea",
+      "#dec3ff",
+      "#fff4bd",
+    ];
     for (let i = 0; i < 60; i++) {
-      items.push({ id: i, type: Math.random() > 0.4 ? 'star' : 'note', left: `${Math.random() * 100}%`, delay: `${Math.random() * 10}s`, duration: `${4 + Math.random() * 8}s`, size: 14 + Math.random() * 22, color: colors[Math.floor(Math.random() * colors.length)], twinkleDuration: `${1 + Math.random() * 2}s` });
+      items.push({
+        id: i,
+        type: Math.random() > 0.4 ? "star" : "note",
+        left: `${Math.random() * 100}%`,
+        delay: `${Math.random() * 10}s`,
+        duration: `${4 + Math.random() * 8}s`,
+        size: 14 + Math.random() * 22,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        twinkleDuration: `${1 + Math.random() * 2}s`,
+      });
     }
     return items;
   }, []);
 
   const isTodayOrYesterday = (dateStr) => {
     if (!dateStr) return false;
-    const d = new Date(dateStr); d.setHours(0,0,0,0);
-    const today = new Date(); today.setHours(0,0,0,0);
-    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
-    return d.getTime() === today.getTime() || d.getTime() === yesterday.getTime();
+    const d = new Date(dateStr);
+    d.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return (
+      d.getTime() === today.getTime() || d.getTime() === yesterday.getTime()
+    );
   };
 
   if (!role) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-pink-100 p-10 relative overflow-hidden">
-        {backgroundItems.map(item => (
-          <div key={item.id} className={`absolute pointer-events-none opacity-25 ${item.type === 'star' ? 'twinkle' : 'float-up'}`}
-            style={{ left: item.left, animationDelay: item.delay, animationDuration: item.duration, color: item.color, bottom: '-50px', '--twinkle-dur': item.twinkleDuration }}>
-            {item.type === 'star' ? <Star size={item.size} fill="currentColor" /> : <Music size={item.size} />}
+      <div
+        className={`h-screen flex flex-col items-center justify-center ${currentTheme.colors.bg} p-10 relative overflow-hidden`}
+      >
+        {backgroundItems.map((item) => (
+          <div
+            key={item.id}
+            className={`absolute pointer-events-none opacity-25 ${item.type === "star" ? "twinkle" : "float-up"}`}
+            style={{
+              left: item.left,
+              animationDelay: item.delay,
+              animationDuration: item.duration,
+              color: item.color,
+              bottom: "-50px",
+              "--twinkle-dur": item.twinkleDuration,
+            }}
+          >
+            {item.type === "star" ? (
+              <Star size={item.size} fill="currentColor" />
+            ) : (
+              <Music size={item.size} />
+            )}
           </div>
         ))}
-        <div className="bg-white/90 backdrop-blur-sm p-8 rounded-[40px] shadow-2xl text-center w-full max-w-xs border-8 border-pink-200 animate-in zoom-in z-10">
-          <Cat size={64} className="mx-auto text-pink-400 mb-4 animate-bounce" />
-          <h1 className="text-2xl font-black text-pink-600 mb-6 italic text-balance leading-tight">{pins.girlName}'s Secret Box</h1>
-          <input type="password" placeholder="****" className="w-full p-4 text-center text-4xl font-black rounded-2xl bg-pink-50 border-4 border-pink-100 outline-none mb-4"
-            value={pinInput} onChange={(e) => setPinInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleLogin()} />
-          <button onClick={handleLogin} className="w-full bg-pink-500 text-white font-black py-4 rounded-2xl shadow-lg hover:bg-pink-600 transition-all active:scale-95 uppercase tracking-wide">Open {pins.girlName}'s Sky</button>
+        <div
+          className={`bg-white/90 backdrop-blur-sm p-10 rounded-[40px] shadow-2xl text-center w-full max-w-sm border-8 ${currentTheme.colors.modalBorder} animate-in zoom-in z-10`}
+        >
+          <div className="relative mb-8">
+            <currentTheme.character
+              size={80}
+              className={`mx-auto ${currentTheme.colors.text400} animate-bounce`}
+            />
+            <div className="absolute -top-2 -right-2">
+              <Sparkles size={24} className="text-yellow-400 animate-pulse" />
+            </div>
+          </div>
+          <h1
+            className={`text-3xl font-black ${currentTheme.colors.text} mb-2 italic leading-tight`}
+          >
+            Sky Path Tracker
+          </h1>
+          <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-8">
+            Login to start your journey
+          </p>
+
+          <button
+            onClick={handleLogin}
+            className={`w-full ${currentTheme.colors.btn} text-white font-black py-5 rounded-2xl shadow-xl ${currentTheme.colors.btnHover} transition-all active:scale-95 uppercase tracking-widest flex items-center justify-center gap-3 group`}
+          >
+            <div className="bg-white p-1 rounded-full group-hover:rotate-12 transition-transform">
+              <svg width="20" height="20" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.66l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                />
+              </svg>
+            </div>
+            Login with Google
+          </button>
         </div>
       </div>
     );
   }
 
-  if (loading && goal) return <div className="h-screen flex flex-col items-center justify-center bg-pink-50"><Loader2 className="animate-spin text-pink-400 mb-2" size={48} /><p className="font-bold text-pink-300">Summoning Clouds...</p></div>;
+  if (loading && role)
+    return (
+      <div
+        className={`h-screen flex flex-col items-center justify-center ${currentTheme.colors.bg50}`}
+      >
+        <Loader2
+          className={`animate-spin ${currentTheme.colors.text400} mb-2`}
+          size={48}
+        />
+        <p className={`font-bold ${currentTheme.colors.text400}`}>
+          Summoning Clouds...
+        </p>
+      </div>
+    );
 
   return (
-    <div className="min-h-screen bg-[#f0f9ff] font-sans text-slate-800 overflow-x-hidden relative">
+    <div
+      className={`min-h-screen ${currentTheme.colors.bg50} font-sans text-slate-800 overflow-x-hidden relative`}
+    >
       <div className="fixed inset-0 pointer-events-none z-0">
         {backgroundItems.map((item) => (
           <div
@@ -687,56 +1063,96 @@ const App = () => {
       </div>
 
       {/* Header */}
-      {goal && (
-        <div className="fixed top-0 left-0 right-0 z-50 p-3 bg-white/90 backdrop-blur-md border-b-2 border-pink-100 flex justify-between items-center shadow-md gap-2">
-          <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
-            <div className="bg-pink-400 p-2 rounded-lg text-white flex-shrink-0">
-              <Music size={18} />
-            </div>
-            <div className="leading-tight flex-1 min-w-0 overflow-hidden relative group">
-              <div className="whitespace-nowrap marquee inline-block">
-                <h1 className="text-sm font-black text-pink-600 inline-block pr-8">
-                  {goal.songName}
-                </h1>
-                <h1 className="text-sm font-black text-pink-600 inline-block pr-8">
-                  {goal.songName}
-                </h1>
+      {!loading && role && (
+        <div
+          className={`fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-md border-b-2 ${currentTheme.colors.modalBorder} shadow-md transition-all duration-300`}
+        >
+          <div className="p-3 flex justify-between items-center gap-2">
+            <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
+              <div
+                className={`${currentTheme.colors.btn400} p-2 rounded-lg text-white shrink-0`}
+              >
+                <currentTheme.instrument size={18} />
               </div>
-              <p className="text-[9px] uppercase font-bold text-slate-400 tracking-wider truncate">
-                {pins.girlName}'s Sky Path
-              </p>
+              <div className="leading-tight flex-1 min-w-0 overflow-hidden relative group">
+                <div className="whitespace-nowrap marquee inline-block">
+                  <h1
+                    className={`text-sm font-black ${currentTheme.colors.text} inline-block pr-8`}
+                  >
+                    {goal ? goal.songName : "Welcome!"}
+                  </h1>
+                  {goal && (
+                    <h1
+                      className={`text-sm font-black ${currentTheme.colors.text} inline-block pr-8`}
+                    >
+                      {goal.songName}
+                    </h1>
+                  )}
+                </div>
+                <p className="text-[9px] uppercase font-bold text-slate-400 tracking-wider truncate">
+                  {(role === "parent" ? selectedKidConfig?.name : userConfig?.name) || 'Student'}'s Sky Path
+                </p>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              onClick={() => setIsMuted(!isMuted)}
-              className="text-slate-400 hover:text-pink-500 p-2 bg-slate-100 rounded-full transition-colors"
-            >
-              {isMuted ? (
-                <VolumeX size={18} />
-              ) : (
-                <Volume2 size={18} className="animate-pulse" />
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setIsMuted(!isMuted)}
+                className={`text-slate-400 hover:${currentTheme.colors.text500} p-2 bg-slate-100 rounded-full transition-colors`}
+              >
+                {isMuted ? (
+                  <VolumeX size={18} />
+                ) : (
+                  <Volume2 size={18} className="animate-pulse" />
+                )}
+              </button>
+              {goal && (
+                <div
+                  className={`px-3 py-1 rounded-full text-white font-black text-xs flex items-center gap-1 shadow-sm ${daysToDeadline < 0 ? "bg-rose-400" : "bg-emerald-400"}`}
+                >
+                  <TrophyIcon size={14} />{" "}
+                  {goal.completed ? goal.finalScore : currentPotentialScore}
+                </div>
               )}
-            </button>
-            <div
-              className={`px-3 py-1 rounded-full text-white font-black text-xs flex items-center gap-1 shadow-sm ${daysToDeadline < 0 ? "bg-rose-400" : "bg-emerald-400"}`}
-            >
-              <TrophyIcon size={14} />{" "}
-              {goal.completed ? goal.finalScore : currentPotentialScore}
+              <button
+                onClick={handleLogout}
+                className={`text-slate-300 hover:${currentTheme.colors.text400} transition-colors p-1`}
+              >
+                <Lock size={18} />
+              </button>
             </div>
-            <button
-              onClick={handleLogout}
-              className="text-slate-300 hover:text-pink-400 transition-colors p-1"
-            >
-              <Lock size={18} />
-            </button>
           </div>
+
+          {role === "parent" && userConfig.kids?.length > 1 && (
+            <div className="px-3 pb-2 flex gap-2 overflow-x-auto no-scrollbar border-t border-slate-50 pt-2 mt-1">
+              {userConfig.kids.map((kidEmail) => {
+                const kid = ALLOWED_USERS[kidEmail];
+                const isSelected = selectedKidEmail === kidEmail;
+                const KidIcon = kid?.theme ? THEMES[kid.theme].instrument : Music;
+                return (
+                  <button
+                    key={kidEmail}
+                    onClick={() => setSelectedKidEmail(kidEmail)}
+                    className={`whitespace-nowrap px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border-2 flex items-center gap-1.5 ${
+                      isSelected
+                        ? `${currentTheme.colors.btn} text-white ${currentTheme.colors.border} shadow-sm scale-105`
+                        : "bg-slate-50 text-slate-400 border-transparent hover:bg-slate-100"
+                    }`}
+                  >
+                    <div className={isSelected ? 'text-white/80' : 'text-slate-300'}>
+                      <KidIcon size={12} />
+                    </div>
+                    {kid?.name || kidEmail}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
       {/* Configuration Modal */}
       {showSettings && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white rounded-[40px] p-8 w-full max-w-md shadow-2xl border-8 border-blue-100 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-black text-blue-600 italic">
@@ -756,38 +1172,14 @@ const App = () => {
                 </h3>
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
-                    Girl's Name
+                    Kid's Name
                   </label>
                   <input
                     type="text"
                     className="w-full p-4 rounded-xl bg-slate-50 border-2 font-bold"
-                    value={editGirlName}
-                    onChange={(e) => setEditGirlName(e.target.value)}
+                    value={editKidName}
+                    onChange={(e) => setEditKidName(e.target.value)}
                   />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
-                      Girl PIN
-                    </label>
-                    <input
-                      type="text"
-                      className="w-full p-4 rounded-xl bg-slate-50 border-2"
-                      value={editGirlPin}
-                      onChange={(e) => setEditGirlPin(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
-                      Parent PIN
-                    </label>
-                    <input
-                      type="text"
-                      className="w-full p-4 rounded-xl bg-slate-50 border-2"
-                      value={editParentPin}
-                      onChange={(e) => setEditParentPin(e.target.value)}
-                    />
-                  </div>
                 </div>
               </div>
               {goal && (
@@ -801,7 +1193,7 @@ const App = () => {
                     </label>
                     <input
                       type="text"
-                      className="w-full p-4 rounded-xl bg-pink-50 border-2 border-pink-100 font-bold"
+                      className={`w-full p-4 rounded-xl ${currentTheme.colors.bg50} border-2 ${currentTheme.colors.modalBorder} font-bold`}
                       value={editGoalName}
                       onChange={(e) => setEditGoalName(e.target.value)}
                     />
@@ -863,7 +1255,7 @@ const App = () => {
       )}
 
       {/* Path */}
-      <div className="pt-32 pb-64 px-6 flex flex-col-reverse items-center relative max-w-lg mx-auto z-10">
+      <div className={`pb-64 px-6 flex flex-col-reverse items-center relative max-w-lg mx-auto z-10 transition-all duration-300 ${role === 'parent' && userConfig.kids?.length > 1 ? 'pt-44' : 'pt-32'}`}>
         <div className="w-full text-center py-6 opacity-30">
           <div className="h-1 bg-green-300 rounded-full w-full mb-1"></div>
           <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">
@@ -872,16 +1264,20 @@ const App = () => {
         </div>
 
         {!goal ? (
-          role === "parent" && (
-            <div className="bg-white/90 backdrop-blur p-8 rounded-[40px] shadow-2xl border-8 border-pink-100 w-full mb-20 animate-in zoom-in">
-              <h2 className="text-xl font-black text-pink-500 mb-6 text-center italic">
-                New Goal for {pins.girlName}
+          role === "parent" ? (
+            <div
+              className={`bg-white/90 backdrop-blur p-8 rounded-[40px] shadow-2xl border-8 ${currentTheme.colors.modalBorder} w-full mb-20 animate-in zoom-in`}
+            >
+              <h2
+                className={`text-xl font-black ${currentTheme.colors.text500} mb-6 text-center italic`}
+              >
+                New Goal for {selectedKidConfig?.name}
               </h2>
               <div className="space-y-4">
                 <input
                   type="text"
                   placeholder="Song Name"
-                  className="w-full p-4 rounded-xl bg-pink-50 border-2 border-pink-100 font-bold"
+                  className={`w-full p-4 rounded-xl ${currentTheme.colors.bg50} border-2 ${currentTheme.colors.modalBorder} font-bold`}
                   value={editGoalName}
                   onChange={(e) => setEditGoalName(e.target.value)}
                 />
@@ -889,21 +1285,21 @@ const App = () => {
                   <input
                     type="number"
                     placeholder="Weeks"
-                    className="p-4 rounded-xl bg-pink-50 border-2 border-pink-100"
+                    className={`p-4 rounded-xl ${currentTheme.colors.bg50} border-2 ${currentTheme.colors.modalBorder}`}
                     value={editWeeks}
                     onChange={(e) => setEditWeeks(e.target.value)}
                   />
                   <input
                     type="number"
                     placeholder="Max Score"
-                    className="p-4 rounded-xl bg-pink-50 border-2 border-pink-100"
+                    className={`p-4 rounded-xl ${currentTheme.colors.bg50} border-2 ${currentTheme.colors.modalBorder}`}
                     value={editScore}
                     onChange={(e) => setEditScore(e.target.value)}
                   />
                 </div>
                 <button
                   onClick={async () => {
-                    if (!editGoalName) return;
+                    if (!editGoalName || !storageKey) return;
                     const g = {
                       songName: editGoalName,
                       targetWeeks: parseInt(editWeeks),
@@ -918,14 +1314,14 @@ const App = () => {
                         db,
                         "artifacts",
                         appId,
-                        "public",
-                        "data",
+                        "users",
+                        storageKey,
                         "goals",
                       ),
                       g,
                     );
                   }}
-                  className="w-full bg-pink-400 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-pink-500 transition-all active:scale-95 uppercase tracking-wide"
+                  className={`w-full ${currentTheme.colors.btn400} text-white font-black py-4 rounded-2xl shadow-xl ${currentTheme.colors.btn400Hover} transition-all active:scale-95 uppercase tracking-wide`}
                 >
                   Start the Journey
                 </button>
@@ -934,7 +1330,7 @@ const App = () => {
                     onClick={() => setShowSettings(true)}
                     className="flex-1 text-slate-400 text-[10px] font-bold uppercase py-3 bg-slate-50 rounded-xl flex items-center justify-center gap-1"
                   >
-                    <Settings size={12} /> Edit PINs
+                    <Settings size={12} /> Global Config
                   </button>
                   <label className="flex-1 text-blue-500 text-[10px] font-bold uppercase py-3 bg-blue-50 rounded-xl text-center cursor-pointer flex items-center justify-center gap-1">
                     <Upload size={12} /> Import Data{" "}
@@ -946,6 +1342,43 @@ const App = () => {
                     />
                   </label>
                 </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white/90 backdrop-blur p-12 rounded-[50px] shadow-2xl border-8 border-pink-100 text-center animate-in zoom-in max-w-sm mx-auto mb-20">
+              <div className="mb-6 relative">
+                <currentTheme.character
+                  size={80}
+                  className={`${currentTheme.colors.text400} mx-auto animate-bounce`}
+                />
+                <Cloud
+                  size={30}
+                  className="absolute -top-4 -right-4 text-blue-200 animate-pulse"
+                />
+              </div>
+              <h2
+                className={`text-2xl font-black ${currentTheme.colors.text} mb-2 italic`}
+              >
+                Almost There!
+              </h2>
+              <p className="text-slate-400 text-sm font-bold uppercase tracking-wider mb-8">
+                Waiting for your parent to set your mission...
+              </p>
+              <div className="flex flex-col gap-3">
+                <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-100">
+                  <p className="text-[10px] font-black text-slate-400 uppercase mb-1">
+                    Signed in as
+                  </p>
+                  <p className="text-xs font-bold text-slate-600">
+                    {user?.email}
+                  </p>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className={`w-full py-4 rounded-2xl bg-slate-100 text-slate-400 font-black hover:bg-slate-200 transition-all flex items-center justify-center gap-2`}
+                >
+                  <Lock size={18} /> Switch Account
+                </button>
               </div>
             </div>
           )
@@ -979,11 +1412,17 @@ const App = () => {
                   {/* Parent Encouragement Bubble - Offset to the Left */}
                   {hasComment && !isFuture && (
                     <div className="absolute right-[85%] top-[-12px] z-20 animate-in slide-in-from-right-2 fade-in zoom-in group">
-                      <div className="relative bg-white px-4 py-2 rounded-2xl shadow-lg border-2 border-pink-200 min-w-[100px] max-w-[140px]">
-                        <p className="handwriting text-xs text-pink-600 leading-tight italic text-balance">
+                      <div
+                        className={`relative bg-white px-4 py-2 rounded-2xl shadow-lg border-2 ${currentTheme.colors.border} min-w-[100px] max-w-[140px]`}
+                      >
+                        <p
+                          className={`handwriting text-xs ${currentTheme.colors.text} leading-tight italic text-balance`}
+                        >
                           {item.comment}
                         </p>
-                        <div className="absolute bottom-2 -right-2 w-3 h-3 bg-white border-t-2 border-r-2 border-pink-200 rotate-45"></div>
+                        <div
+                          className={`absolute bottom-2 -right-2 w-3 h-3 bg-white border-t-2 border-r-2 ${currentTheme.colors.border} rotate-45`}
+                        ></div>
                       </div>
                     </div>
                   )}
@@ -992,7 +1431,9 @@ const App = () => {
                     <div
                       className={`absolute -top-14 left-[50%] -translate-x-1/2 z-10 ${catMood === "happy" ? "cat-fly-happy" : catMood === "sad" ? "cat-quiver-sad" : "animate-bounce"}`}
                     >
-                      <div className="bg-white p-2 rounded-full shadow-2xl border-4 border-pink-300 relative">
+                      <div
+                        className={`bg-white p-2 rounded-full shadow-2xl border-4 ${currentTheme.colors.ring} relative`}
+                      >
                         {catMood === "sad" ? (
                           <>
                             <Frown size={56} className="text-slate-400" />
@@ -1001,7 +1442,10 @@ const App = () => {
                             </div>
                           </>
                         ) : (
-                          <Cat size={56} className="text-pink-500" />
+                          <currentTheme.character
+                            size={56}
+                            className={`${currentTheme.colors.text500}`}
+                          />
                         )}
                       </div>
                       <div className="absolute left-20 top-0 w-32 space-y-1 pointer-events-none">
@@ -1023,7 +1467,7 @@ const App = () => {
                     onClick={() =>
                       (!isFuture || isTodayHighlight) && setSelectedDay(item)
                     }
-                    className={`relative cursor-pointer hover:scale-105 transition-transform ${isMissed ? "text-slate-400" : isTodayHighlight ? "text-yellow-400 animate-pulse" : isFuture ? "text-blue-200" : "text-pink-300"}`}
+                    className={`relative cursor-pointer hover:scale-105 transition-transform ${isMissed ? "text-slate-400" : isTodayHighlight ? "text-yellow-400 animate-pulse" : isFuture ? "text-blue-200" : currentTheme.colors.cloud}`}
                   >
                     <Cloud
                       size={100}
@@ -1048,7 +1492,10 @@ const App = () => {
                             className="text-yellow-400"
                           />
                         ) : (
-                          <Music size={24} className="text-white opacity-80" />
+                          <currentTheme.instrument
+                            size={24}
+                            className="text-white opacity-80"
+                          />
                         )}
                       </div>
                     )}
@@ -1107,7 +1554,7 @@ const App = () => {
                     {goal.finalScore} PTS
                   </p>
                   <p className="text-xs font-bold text-slate-400 mt-2 italic uppercase">
-                    Great job, {pins.girlName}!
+                    Great job, {role === "parent" ? selectedKidConfig?.name : userConfig?.name}!
                   </p>
                 </div>
               )}
@@ -1123,7 +1570,7 @@ const App = () => {
             <div className="flex flex-col gap-4 items-end">
               <button
                 onClick={() => logPractice("completed")}
-                className={`w-20 h-20 bg-pink-400 text-white rounded-full shadow-[0_10px_0_0_#be185d] flex items-center justify-center active:translate-y-1 active:shadow-none transition-all ${todayStatus === "completed" ? "ring-4 ring-pink-200" : "opacity-90"}`}
+                className={`w-20 h-20 ${currentTheme.colors.btn400} text-white rounded-full shadow-[0_10px_0_0_#be185d] flex items-center justify-center active:translate-y-1 active:shadow-none transition-all ${todayStatus === "completed" ? currentTheme.colors.ring + " ring-4" : "opacity-90"}`}
               >
                 <CheckCircle2 size={44} />
               </button>
@@ -1213,15 +1660,19 @@ const App = () => {
 
       {/* Day Detail Modal */}
       {selectedDay && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-[40px] p-8 w-full max-w-sm shadow-2xl border-8 border-pink-100 relative text-center max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div
+            className={`bg-white rounded-[40px] p-8 w-full max-w-sm shadow-2xl border-8 ${currentTheme.colors.modalBorder} relative text-center max-h-[90vh] overflow-y-auto`}
+          >
             <button
               onClick={() => setSelectedDay(null)}
-              className="absolute top-4 right-4 text-slate-300 hover:text-pink-500"
+              className={`absolute top-4 right-4 text-slate-300 hover:${currentTheme.colors.text500}`}
             >
               <X size={24} />
             </button>
-            <h3 className="text-xl font-black text-pink-600 mb-2 italic leading-tight">
+            <h3
+              className={`text-xl font-black ${currentTheme.colors.text} mb-2 italic leading-tight`}
+            >
               Practice Memories
             </h3>
             <p className="text-[10px] font-bold text-slate-400 mb-6 uppercase tracking-widest leading-none">
@@ -1263,20 +1714,24 @@ const App = () => {
                   )}
 
                 {!selectedDay.id.startsWith("future") && (
-                  <div className="p-4 bg-pink-50 rounded-3xl border-2 border-pink-100">
-                    <p className="text-[10px] font-black text-pink-500 uppercase mb-3 tracking-widest leading-none flex items-center justify-center gap-2">
+                  <div
+                    className={`p-4 ${currentTheme.colors.bg50} rounded-3xl border-2 ${currentTheme.colors.modalBorder}`}
+                  >
+                    <p
+                      className={`text-[10px] font-black ${currentTheme.colors.text500} uppercase mb-3 tracking-widest leading-none flex items-center justify-center gap-2`}
+                    >
                       <MessageCircleHeart size={14} /> Parent Cheer
                     </p>
                     <div className="relative">
                       <textarea
-                        className="w-full p-3 pr-10 rounded-2xl bg-white border-2 border-pink-100 handwriting text-sm outline-none focus:border-pink-300 resize-none h-20"
+                        className={`w-full p-3 pr-10 rounded-2xl bg-white border-2 ${currentTheme.colors.modalBorder} handwriting text-sm outline-none focus:border-${currentTheme.primary}-300 resize-none h-20`}
                         placeholder="Great job today! Love you!"
                         value={commentInput}
                         onChange={(e) => setCommentInput(e.target.value)}
                       />
                       <button
                         onClick={saveFeedback}
-                        className="absolute bottom-2 right-2 p-2 bg-pink-400 text-white rounded-xl shadow-md hover:bg-pink-500 transition-all"
+                        className={`absolute bottom-2 right-2 p-2 ${currentTheme.colors.btn400} text-white rounded-xl shadow-md ${currentTheme.colors.btn400Hover} transition-all`}
                       >
                         <SendHorizontal size={16} />
                       </button>
@@ -1287,11 +1742,17 @@ const App = () => {
             )}
 
             {role === "girl" && selectedDay.comment && (
-              <div className="mb-6 p-5 bg-pink-50 rounded-[32px] border-2 border-pink-100 italic">
-                <p className="handwriting text-pink-600 text-lg leading-relaxed">
+              <div
+                className={`mb-6 p-5 ${currentTheme.colors.bg50} rounded-[32px] border-2 ${currentTheme.colors.modalBorder} italic`}
+              >
+                <p
+                  className={`handwriting ${currentTheme.colors.text} text-lg leading-relaxed`}
+                >
                   "{selectedDay.comment}"
                 </p>
-                <div className="flex justify-center mt-2 text-pink-300">
+                <div
+                  className={`flex justify-center mt-2 ${currentTheme.colors.text400}`}
+                >
                   <Heart size={20} fill="currentColor" />
                 </div>
               </div>
@@ -1299,14 +1760,19 @@ const App = () => {
 
             {isAssembling ? (
               <div className="flex flex-col items-center gap-3 py-10">
-                <Loader2 size={40} className="animate-spin text-pink-400" />
+                <Loader2
+                  size={40}
+                  className={`animate-spin ${currentTheme.colors.text400}`}
+                />
                 <p className="text-xs font-bold text-slate-400 italic">
                   Finding the melody...
                 </p>
               </div>
             ) : fullAudioData ? (
               <div className="space-y-6">
-                <div className="bg-pink-50 p-6 rounded-[32px] border-2 border-pink-100">
+                <div
+                  className={`${currentTheme.colors.bg50} p-6 rounded-[32px] border-2 ${currentTheme.colors.modalBorder}`}
+                >
                   <audio controls src={fullAudioData} className="w-full" />
                 </div>
                 {role === "parent" && (
@@ -1333,7 +1799,7 @@ const App = () => {
             {role === "girl" && !goal?.completed && (
               <div className="mt-6">
                 <label
-                  className={`w-full py-4 rounded-2xl font-black flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg ${isUploading ? "bg-slate-100 text-slate-400" : "bg-pink-500 text-white hover:bg-pink-600 active:scale-95"}`}
+                  className={`w-full py-4 rounded-2xl font-black flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg ${isUploading ? "bg-slate-100 text-slate-400" : `${currentTheme.colors.btn} text-white ${currentTheme.colors.btnHover} active:scale-95`}`}
                 >
                   {isUploading ? (
                     <RotateCcw className="animate-spin" size={20} />
@@ -1405,7 +1871,9 @@ const App = () => {
         .items-center { align-items: center; }
         .justify-center { justify-content: center; }
         .min-h-screen { min-height: 100vh; }
-        .bg-pink-100 { background-color: #fce4ec; }
+        .bg-pink-100 { background-color: ${currentTheme.accent}; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
     </div>
   );
