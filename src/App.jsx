@@ -183,6 +183,9 @@ const App = () => {
   const [commentInput, setCommentInput] = useState("");
   const [actingAsKid, setActingAsKid] = useState(false);
   const [showMoreButtons, setShowMoreButtons] = useState(false);
+  const [customThemes, setCustomThemes] = useState({});
+  const [editTheme, setEditTheme] = useState("girl-piano");
+
 
 
 
@@ -199,13 +202,24 @@ const App = () => {
 
   const selectedKidConfig = useMemo(() => {
     if (!selectedKidEmail) return null;
-    return ALLOWED_USERS[selectedKidEmail];
-  }, [selectedKidEmail]);
+    const base = ALLOWED_USERS[selectedKidEmail];
+    return {
+      ...base,
+      theme: customThemes[selectedKidEmail.toLowerCase()] || base?.theme,
+    };
+  }, [selectedKidEmail, customThemes]);
+
+  const effectiveUserConfig = useMemo(() => {
+    if (!userConfig || !user?.email) return userConfig;
+    const email = user.email.toLowerCase();
+    return { ...userConfig, theme: customThemes[email] || userConfig?.theme };
+  }, [userConfig, customThemes, user]);
 
   const currentTheme = useMemo(() => {
-    const config = role === "parent" ? selectedKidConfig : userConfig;
+    const config = role === "parent" ? selectedKidConfig : effectiveUserConfig;
     return THEMES[config?.theme] || THEMES["girl-piano"];
-  }, [role, selectedKidConfig, userConfig]);
+  }, [role, selectedKidConfig, effectiveUserConfig]);
+
 
   const storageKey = useMemo(() => {
     if (!user?.email) return null;
@@ -254,7 +268,28 @@ const App = () => {
     if (!user || !storageKey) return;
     setLoading(true);
 
+    const email =
+      role === "parent" ? selectedKidEmail : user.email.toLowerCase();
+    const prefsRef = doc(
+      db,
+      "artifacts",
+      appId,
+      "users",
+      email.replace(/[@.]/g, "_"),
+      "settings",
+      "preferences",
+    );
+    const unsubPrefs = onSnapshot(prefsRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.theme) {
+          setCustomThemes((prev) => ({ ...prev, [email]: data.theme }));
+        }
+      }
+    });
+
     const goalRef = collection(
+
       db,
       "artifacts",
       appId,
@@ -299,18 +334,23 @@ const App = () => {
         setLoading(false);
       }
     });
-    return () => unsubGoal();
-  }, [user, storageKey]);
+    return () => {
+      unsubGoal();
+      unsubPrefs();
+    };
+  }, [user, storageKey, role, selectedKidEmail]);
+
 
   useEffect(() => {
     if (showSettings) {
-      if (role === "parent" && selectedKidConfig) {
-        setEditKidName(selectedKidConfig.name);
-      } else if (userConfig) {
-        setEditKidName(userConfig.name);
+      const config = role === "parent" ? selectedKidConfig : effectiveUserConfig;
+      if (config) {
+        setEditKidName(config.name);
+        setEditTheme(config.theme || "girl-piano");
       }
     }
-  }, [showSettings, role, selectedKidConfig, userConfig]);
+  }, [showSettings, role, selectedKidConfig, effectiveUserConfig]);
+
 
 
   const fetchFullAudio = useCallback(
@@ -444,9 +484,26 @@ const App = () => {
   };
 
   const saveConfig = async () => {
-    if (!user || role !== "parent" || !storageKey) return;
+    if (!user || !storageKey) return;
     try {
-      if (goal) {
+      const email =
+        role === "parent" ? selectedKidEmail : user.email.toLowerCase();
+      const prefsRef = doc(
+        db,
+        "artifacts",
+        appId,
+        "users",
+        email.replace(/[@.]/g, "_"),
+        "settings",
+        "preferences",
+      );
+      await updateDoc(prefsRef, { theme: editTheme }).catch(async () => {
+        // Create if doesn't exist
+        const { setDoc } = await import("firebase/firestore");
+        await setDoc(prefsRef, { theme: editTheme });
+      });
+
+      if (role === "parent" && goal) {
         const goalRef = doc(
           db,
           "artifacts",
@@ -469,6 +526,7 @@ const App = () => {
       playSoundEffect("fail");
     }
   };
+
 
   const saveFeedback = async () => {
     if (role !== "parent" || !selectedDay || !storageKey) return;
@@ -1059,7 +1117,61 @@ const App = () => {
         <div
           className={`fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-md border-b-2 ${currentTheme.colors.modalBorder} shadow-md transition-all duration-300`}
         >
-          <div className="p-3 flex justify-between items-center gap-2">
+          {role === "parent" && userConfig.kids?.length > 1 && (
+            <div className="px-3 pt-3 pb-1 flex justify-between items-center gap-4">
+              <div className="flex gap-2 overflow-x-auto no-scrollbar flex-1">
+                {userConfig.kids.map((kidEmail) => {
+                  const kid = ALLOWED_USERS[kidEmail];
+                  const isSelected = selectedKidEmail === kidEmail;
+                  const KidIcon = kid?.theme
+                    ? THEMES[kid.theme].instrument
+                    : Music;
+                  return (
+                    <button
+                      key={kidEmail}
+                      onClick={() => setSelectedKidEmail(kidEmail)}
+                      className={`whitespace-nowrap px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border-2 flex items-center gap-1.5 ${
+                        isSelected
+                          ? `${currentTheme.colors.btn} text-white ${currentTheme.colors.border} shadow-sm scale-105`
+                          : "bg-slate-50 text-slate-400 border-transparent hover:bg-slate-100"
+                      }`}
+                    >
+                      <div
+                        className={
+                          isSelected ? "text-white/80" : "text-slate-300"
+                        }
+                      >
+                        <KidIcon size={12} />
+                      </div>
+                      {kid?.name || kidEmail}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setIsMuted(!isMuted)}
+                  className={`text-slate-400 hover:${currentTheme.colors.text500} p-2 bg-slate-100 rounded-full transition-colors`}
+                >
+                  {isMuted ? (
+                    <VolumeX size={16} />
+                  ) : (
+                    <Volume2 size={16} className="animate-pulse" />
+                  )}
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className={`text-slate-300 hover:${currentTheme.colors.text400} transition-colors p-1`}
+                >
+                  <Lock size={18} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div
+            className={`p-3 flex justify-between items-center gap-2 ${role === "parent" && userConfig.kids?.length > 1 ? "border-t border-slate-50" : ""}`}
+          >
             <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
               <div
                 className={`${currentTheme.colors.btn400} p-2 rounded-lg text-white shrink-0`}
@@ -1090,16 +1202,18 @@ const App = () => {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => setIsMuted(!isMuted)}
-                className={`text-slate-400 hover:${currentTheme.colors.text500} p-2 bg-slate-100 rounded-full transition-colors`}
-              >
-                {isMuted ? (
-                  <VolumeX size={18} />
-                ) : (
-                  <Volume2 size={18} className="animate-pulse" />
-                )}
-              </button>
+              {role === "girl" && (
+                <button
+                  onClick={() => setIsMuted(!isMuted)}
+                  className={`text-slate-400 hover:${currentTheme.colors.text500} p-2 bg-slate-100 rounded-full transition-colors`}
+                >
+                  {isMuted ? (
+                    <VolumeX size={18} />
+                  ) : (
+                    <Volume2 size={18} className="animate-pulse" />
+                  )}
+                </button>
+              )}
               {goal && (
                 <div
                   className={`px-3 py-1 rounded-full text-white font-black text-xs flex items-center gap-1 shadow-sm ${daysToDeadline < 0 ? "bg-rose-400" : "bg-emerald-400"}`}
@@ -1108,48 +1222,29 @@ const App = () => {
                   {goal.completed ? goal.finalScore : currentPotentialScore}
                 </div>
               )}
-              <button
-                onClick={handleLogout}
-                className={`text-slate-300 hover:${currentTheme.colors.text400} transition-colors p-1`}
-              >
-                <Lock size={18} />
-              </button>
+              {role === "girl" && (
+                <>
+                  <button
+                    onClick={() => setShowSettings(true)}
+                    className={`text-slate-400 hover:${currentTheme.colors.text500} p-2 bg-slate-100 rounded-full transition-colors`}
+                    title="Settings"
+                  >
+                    <Settings size={18} />
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    className={`text-slate-300 hover:${currentTheme.colors.text400} transition-colors p-1`}
+                  >
+                    <Lock size={18} />
+                  </button>
+                </>
+              )}
             </div>
           </div>
-
-          {role === "parent" && userConfig.kids?.length > 1 && (
-            <div className="px-3 pb-2 flex gap-2 overflow-x-auto no-scrollbar border-t border-slate-50 pt-2 mt-1">
-              {userConfig.kids.map((kidEmail) => {
-                const kid = ALLOWED_USERS[kidEmail];
-                const isSelected = selectedKidEmail === kidEmail;
-                const KidIcon = kid?.theme
-                  ? THEMES[kid.theme].instrument
-                  : Music;
-                return (
-                  <button
-                    key={kidEmail}
-                    onClick={() => setSelectedKidEmail(kidEmail)}
-                    className={`whitespace-nowrap px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border-2 flex items-center gap-1.5 ${
-                      isSelected
-                        ? `${currentTheme.colors.btn} text-white ${currentTheme.colors.border} shadow-sm scale-105`
-                        : "bg-slate-50 text-slate-400 border-transparent hover:bg-slate-100"
-                    }`}
-                  >
-                    <div
-                      className={
-                        isSelected ? "text-white/80" : "text-slate-300"
-                      }
-                    >
-                      <KidIcon size={12} />
-                    </div>
-                    {kid?.name || kidEmail}
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </div>
       )}
+
+
 
       {/* Configuration Modal */}
       {showSettings && (
@@ -1169,6 +1264,39 @@ const App = () => {
             <div className="space-y-6">
               <div className="space-y-4">
                 <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1">
+                  Appearance
+                </h3>
+                <div className="space-y-3">
+                  <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
+                    Choose Theme
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {Object.entries(THEMES).map(([id, t]) => (
+                      <button
+                        key={id}
+                        onClick={() => setEditTheme(id)}
+                        className={`p-4 rounded-2xl border-4 transition-all flex flex-col items-center gap-2 ${editTheme === id ? `border-${t.primary}-400 bg-${t.primary}-50 scale-105 shadow-md` : "border-slate-100 grayscale opacity-60 hover:grayscale-0 hover:opacity-100"}`}
+                      >
+                        <t.character
+                          size={32}
+                          className={
+                            editTheme === id
+                              ? `text-${t.primary}-500`
+                              : "text-slate-300"
+                          }
+                        />
+                        <span
+                          className={`text-[10px] font-black uppercase ${editTheme === id ? `text-${t.primary}-600` : "text-slate-400"}`}
+                        >
+                          {id.replace("-", " ")}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-4">
+                <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1">
                   Personal Info
                 </h3>
                 <div>
@@ -1179,6 +1307,7 @@ const App = () => {
                     type="text"
                     className="w-full p-4 rounded-xl bg-slate-50 border-2 font-bold"
                     value={editKidName}
+                    disabled={role !== "parent"}
                     onChange={(e) => setEditKidName(e.target.value)}
                   />
                 </div>
