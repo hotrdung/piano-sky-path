@@ -57,7 +57,10 @@ import {
   Heart,
   Guitar,
   Ghost,
+  MoreHorizontal,
+  Undo2,
 } from "lucide-react";
+
 import ALLOWED_USERS from "./config/users.json";
 
 // --- Theme Configuration ---
@@ -178,6 +181,10 @@ const App = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [isAssembling, setIsAssembling] = useState(false);
   const [commentInput, setCommentInput] = useState("");
+  const [actingAsKid, setActingAsKid] = useState(false);
+  const [showMoreButtons, setShowMoreButtons] = useState(false);
+
+
 
   const [editGoalName, setEditGoalName] = useState("");
   const [editWeeks, setEditWeeks] = useState(4);
@@ -296,10 +303,15 @@ const App = () => {
   }, [user, storageKey]);
 
   useEffect(() => {
-    if (showSettings && userConfig) {
-      setEditKidName(userConfig.name);
+    if (showSettings) {
+      if (role === "parent" && selectedKidConfig) {
+        setEditKidName(selectedKidConfig.name);
+      } else if (userConfig) {
+        setEditKidName(userConfig.name);
+      }
     }
-  }, [showSettings, userConfig]);
+  }, [showSettings, role, selectedKidConfig, userConfig]);
+
 
   const fetchFullAudio = useCallback(
     async (dayId) => {
@@ -993,7 +1005,7 @@ const App = () => {
                 />
               </svg>
             </div>
-            Login with Google
+            Gmail Login
           </button>
         </div>
       </div>
@@ -1178,7 +1190,7 @@ const App = () => {
                   </h3>
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
-                      Song Name
+                      Goal Name (Activity or Song)
                     </label>
                     <input
                       type="text"
@@ -1187,6 +1199,7 @@ const App = () => {
                       onChange={(e) => setEditGoalName(e.target.value)}
                     />
                   </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
@@ -1238,6 +1251,37 @@ const App = () => {
                   <Save size={18} /> Update Configuration
                 </button>
               </div>
+              <div className="pt-6 border-t space-y-4">
+                <h3 className="text-[10px] font-black uppercase text-rose-400 tracking-widest leading-none">
+                  Danger Zone
+                </h3>
+                <button
+                  onClick={() =>
+                    confirmState === "reset"
+                      ? resetEverything()
+                      : setConfirmState("reset")
+                  }
+                  className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${confirmState === "reset" ? "bg-rose-600 text-white animate-pulse" : "bg-rose-50 text-rose-500 hover:bg-rose-100"}`}
+                >
+                  {confirmState === "reset" ? (
+                    <>
+                      <AlertTriangle size={18} /> CONFIRM DELETE ALL DATA
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 size={18} /> Delete All Progress Data
+                    </>
+                  )}
+                </button>
+                {confirmState === "reset" && (
+                  <button
+                    onClick={() => setConfirmState(null)}
+                    className="w-full text-[10px] font-bold text-slate-400 uppercase tracking-widest"
+                  >
+                    Cancel Reset
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1267,11 +1311,12 @@ const App = () => {
               <div className="space-y-4">
                 <input
                   type="text"
-                  placeholder="Song Name"
+                  placeholder="Goal Name (e.g. Play Piano, Read Book)"
                   className={`w-full p-4 rounded-xl ${currentTheme.colors.bg50} border-2 ${currentTheme.colors.modalBorder} font-bold`}
                   value={editGoalName}
                   onChange={(e) => setEditGoalName(e.target.value)}
                 />
+
                 <div className="grid grid-cols-2 gap-4">
                   <input
                     type="number"
@@ -1561,8 +1606,18 @@ const App = () => {
       {/* Buttons */}
       {goal && !goal.completed && (
         <div className="fixed bottom-8 right-8 flex flex-col gap-4 z-50">
-          {role === "girl" ? (
+          {role === "girl" || (role === "parent" && actingAsKid) ? (
             <div className="flex flex-col gap-4 items-end">
+              {role === "parent" && actingAsKid && (
+                <button
+                  onClick={() => setActingAsKid(false)}
+                  className="w-12 h-12 bg-white/90 text-slate-500 rounded-full shadow-md border border-slate-200 flex items-center justify-center mb-2 hover:bg-slate-50 transition-all active:scale-95"
+                  title="Back to Parent View"
+                >
+                  <Undo2 size={24} />
+                </button>
+              )}
+
               <button
                 onClick={() => logPractice("completed")}
                 className={`w-20 h-20 ${currentTheme.colors.btn400} text-white rounded-full shadow-[0_10px_0_0_#be185d] flex items-center justify-center active:translate-y-1 active:shadow-none transition-all ${todayStatus === "completed" ? currentTheme.colors.ring + " ring-4" : "opacity-90"}`}
@@ -1578,49 +1633,61 @@ const App = () => {
             </div>
           ) : (
             <div className="flex flex-col gap-3 items-end">
+              {showMoreButtons && (
+                <div className="flex flex-row-reverse gap-3 mb-2 animate-in slide-in-from-right fade-in">
+                  <button
+                    onClick={() =>
+                      confirmState === "finalize"
+                        ? finalizeGoal()
+                        : setConfirmState("finalize")
+                    }
+                    className={`w-14 h-14 ${confirmState === "finalize" ? "bg-green-500 animate-pulse" : "bg-yellow-400"} text-white rounded-full shadow-lg flex items-center justify-center transition-all`}
+                    title="Finalize Goal"
+                  >
+                    {confirmState === "finalize" ? (
+                      <Check size={28} />
+                    ) : (
+                      <TrophyIcon size={28} />
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setShowSettings(true)}
+                    className="w-14 h-14 bg-blue-500 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all"
+                    title="Configuration"
+                  >
+                    <Settings size={24} />
+                  </button>
+                  <button
+                    onClick={exportData}
+                    className="w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all"
+                    title="Backup"
+                  >
+                    <Download size={24} />
+                  </button>
+                  <label
+                    className="w-14 h-14 bg-indigo-500 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all cursor-pointer"
+                    title="Import Data"
+                  >
+                    <Upload size={24} />
+                    <input
+                      type="file"
+                      className="hidden"
+                      accept=".json"
+                      onChange={importData}
+                    />
+                  </label>
+                </div>
+              )}
+
+
               <button
-                onClick={() =>
-                  confirmState === "finalize"
-                    ? finalizeGoal()
-                    : setConfirmState("finalize")
-                }
-                className={`w-16 h-16 ${confirmState === "finalize" ? "bg-green-500 animate-pulse" : "bg-yellow-400"} text-white rounded-full shadow-lg flex items-center justify-center transition-all`}
+                onClick={() => setShowMoreButtons(!showMoreButtons)}
+                className={`w-14 h-14 ${showMoreButtons ? "bg-slate-600" : "bg-slate-400"} text-white rounded-full shadow-lg flex items-center justify-center transition-all active:scale-95`}
+                title="More Options"
               >
-                {confirmState === "finalize" ? (
-                  <Check size={32} />
-                ) : (
-                  <TrophyIcon size={32} />
-                )}
+                <MoreHorizontal size={28} className={showMoreButtons ? "rotate-90 transition-transform" : "transition-transform"} />
               </button>
-              <button
-                onClick={() => setShowSettings(true)}
-                className="w-14 h-14 bg-blue-500 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all"
-                title="Configuration"
-              >
-                <Settings size={24} />
-              </button>
-              <button
-                onClick={exportData}
-                className="w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all"
-                title="Backup"
-              >
-                <Download size={24} />
-              </button>
-              <button
-                onClick={() =>
-                  confirmState === "reset"
-                    ? resetEverything()
-                    : setConfirmState("reset")
-                }
-                className={`w-14 h-14 ${confirmState === "reset" ? "bg-red-700" : "bg-red-500"} text-white rounded-full shadow-lg flex items-center justify-center transition-all`}
-                title="Reset Everything"
-              >
-                {confirmState === "reset" ? (
-                  <AlertTriangle size={24} />
-                ) : (
-                  <Trash2 size={24} />
-                )}
-              </button>
+
               <button
                 onClick={resetToday}
                 className="w-14 h-14 bg-blue-400 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all"
@@ -1628,18 +1695,15 @@ const App = () => {
               >
                 <RotateCcw size={24} />
               </button>
-              <label
-                className="w-14 h-14 bg-indigo-500 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all cursor-pointer"
-                title="Import Data"
+
+              <button
+                onClick={() => setActingAsKid(true)}
+                className="w-16 h-16 bg-pink-500 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all active:scale-95"
+                title="Log as Kid"
               >
-                <Upload size={24} />{" "}
-                <input
-                  type="file"
-                  className="hidden"
-                  accept=".json"
-                  onChange={importData}
-                />
-              </label>
+                <Cat size={32} />
+              </button>
+
               {confirmState && (
                 <button
                   onClick={() => setConfirmState(null)}
@@ -1649,6 +1713,7 @@ const App = () => {
                 </button>
               )}
             </div>
+
           )}
         </div>
       )}
