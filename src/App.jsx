@@ -1232,13 +1232,13 @@ const App = () => {
               <Sparkles size={24} className="text-yellow-400 animate-pulse" />
             </div>
           </div>
-          <h1
-            className={`text-3xl font-black ${currentTheme.colors.text} mb-2 italic leading-tight`}
-          >
+          <h1 className="text-6xl font-bold tracking-tight mb-4 text-rose-700 drop-shadow-[0_4px_12px_rgba(251,113,133,0.3)] animate-in fade-in zoom-in duration-700">
             Sky Path
           </h1>
+
+
           <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-8">
-            Login to start your journey
+            Start your journey
           </p>
 
           <button
