@@ -1,0 +1,17 @@
+{
+  "kid1@example.com": {
+    "name": "Kid One",
+    "theme": "girl-piano",
+    "role": "girl"
+  },
+  "kid2@example.com": {
+    "name": "Kid Two",
+    "theme": "boy-guitar",
+    "role": "girl"
+  },
+  "parent@example.com": {
+    "name": "Parent",
+    "role": "parent",
+    "kids": ["kid1@example.com", "kid2@example.com"]
+  }
+}

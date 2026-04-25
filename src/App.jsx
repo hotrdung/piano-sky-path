@@ -58,6 +58,7 @@ import {
   Guitar,
   Ghost,
 } from "lucide-react";
+import ALLOWED_USERS from "./config/users.json";
 
 // --- Theme Configuration ---
 const THEMES = {
@@ -106,27 +107,6 @@ const THEMES = {
       shadow: "shadow-yellow-200",
       modalBorder: "border-yellow-100",
     },
-  },
-};
-
-// --- Configured Gmails ---
-const ALLOWED_USERS = {
-  "jennykhanhan16@gmail.com@gmail.com": { name: "Mei", theme: "girl-piano", role: "girl" },
-  "holeduytoan@gmail.com": { name: "Pony", theme: "boy-guitar", role: "girl" },
-  "trdung87@gmail.com": {
-    name: "Admin",
-    role: "parent",
-    kids: ["jennykhanhan16@gmail.com", "holeduytoan@gmail.com"],
-  },
-  "hotrdung@gmail.com": {
-    name: "Dad",
-    role: "parent",
-    kids: ["jennykhanhan16@gmail.com", "holeduytoan@gmail.com"],
-  },
-  "kimxuyentd@gmail.com": {
-    name: "Mom",
-    role: "parent",
-    kids: ["jennykhanhan16@gmail.com", "holeduytoan@gmail.com"],
   },
 };
 
@@ -1090,7 +1070,10 @@ const App = () => {
                   )}
                 </div>
                 <p className="text-[9px] uppercase font-bold text-slate-400 tracking-wider truncate">
-                  {(role === "parent" ? selectedKidConfig?.name : userConfig?.name) || 'Student'}'s Sky Path
+                  {(role === "parent"
+                    ? selectedKidConfig?.name
+                    : userConfig?.name) || "Student"}
+                  's Sky Path
                 </p>
               </div>
             </div>
@@ -1127,7 +1110,9 @@ const App = () => {
               {userConfig.kids.map((kidEmail) => {
                 const kid = ALLOWED_USERS[kidEmail];
                 const isSelected = selectedKidEmail === kidEmail;
-                const KidIcon = kid?.theme ? THEMES[kid.theme].instrument : Music;
+                const KidIcon = kid?.theme
+                  ? THEMES[kid.theme].instrument
+                  : Music;
                 return (
                   <button
                     key={kidEmail}
@@ -1138,7 +1123,11 @@ const App = () => {
                         : "bg-slate-50 text-slate-400 border-transparent hover:bg-slate-100"
                     }`}
                   >
-                    <div className={isSelected ? 'text-white/80' : 'text-slate-300'}>
+                    <div
+                      className={
+                        isSelected ? "text-white/80" : "text-slate-300"
+                      }
+                    >
                       <KidIcon size={12} />
                     </div>
                     {kid?.name || kidEmail}
@@ -1255,7 +1244,9 @@ const App = () => {
       )}
 
       {/* Path */}
-      <div className={`pb-64 px-6 flex flex-col-reverse items-center relative max-w-lg mx-auto z-10 transition-all duration-300 ${role === 'parent' && userConfig.kids?.length > 1 ? 'pt-44' : 'pt-32'}`}>
+      <div
+        className={`pb-64 px-6 flex flex-col-reverse items-center relative max-w-lg mx-auto z-10 transition-all duration-300 ${role === "parent" && userConfig.kids?.length > 1 ? "pt-44" : "pt-32"}`}
+      >
         <div className="w-full text-center py-6 opacity-30">
           <div className="h-1 bg-green-300 rounded-full w-full mb-1"></div>
           <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">
@@ -1554,7 +1545,11 @@ const App = () => {
                     {goal.finalScore} PTS
                   </p>
                   <p className="text-xs font-bold text-slate-400 mt-2 italic uppercase">
-                    Great job, {role === "parent" ? selectedKidConfig?.name : userConfig?.name}!
+                    Great job,{" "}
+                    {role === "parent"
+                      ? selectedKidConfig?.name
+                      : userConfig?.name}
+                    !
                   </p>
                 </div>
               )}
