@@ -1,12 +1,12 @@
 {
   "kid1@example.com": {
     "name": "Kid One",
-    "theme": "girl-piano",
+    "theme": "pinky-girl",
     "role": "girl"
   },
   "kid2@example.com": {
     "name": "Kid Two",
-    "theme": "boy-guitar",
+    "theme": "energy-yellow",
     "role": "girl"
   },
   "parent@example.com": {

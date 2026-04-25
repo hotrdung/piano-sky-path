@@ -1,3 +1,4 @@
+/* global __firebase_config, __app_id */
 import React, {
   useState,
   useEffect,
@@ -16,7 +17,9 @@ import {
   updateDoc,
   writeBatch,
   getDocs,
+  setDoc,
 } from "firebase/firestore";
+
 import {
   getAuth,
   onAuthStateChanged,
@@ -59,59 +62,13 @@ import {
   Ghost,
   MoreHorizontal,
   Undo2,
+  Users,
+  UserPlus,
+  ShieldCheck,
 } from "lucide-react";
 
 import ALLOWED_USERS from "./config/users.json";
-
-// --- Theme Configuration ---
-const THEMES = {
-  "girl-piano": {
-    primary: "pink",
-    character: Cat,
-    instrument: Music,
-    colors: {
-      bg: "bg-pink-100",
-      bg50: "bg-pink-50",
-      border: "border-pink-200",
-      border100: "border-pink-100",
-      text: "text-pink-600",
-      text400: "text-pink-400",
-      text500: "text-pink-500",
-      btn: "bg-pink-500",
-      btnHover: "hover:bg-pink-600",
-      btn400: "bg-pink-400",
-      btn400Hover: "hover:bg-pink-500",
-      cloud: "text-pink-300",
-      ring: "ring-pink-200",
-      accent: "#fce4ec",
-      shadow: "shadow-pink-200",
-      modalBorder: "border-pink-100",
-    },
-  },
-  "boy-guitar": {
-    primary: "yellow",
-    character: Ghost,
-    instrument: Guitar,
-    colors: {
-      bg: "bg-yellow-100",
-      bg50: "bg-yellow-50",
-      border: "border-yellow-200",
-      border100: "border-yellow-100",
-      text: "text-yellow-600",
-      text400: "text-yellow-400",
-      text500: "text-yellow-500",
-      btn: "bg-yellow-500",
-      btnHover: "hover:bg-yellow-600",
-      btn400: "bg-yellow-400",
-      btn400Hover: "hover:bg-yellow-500",
-      cloud: "text-yellow-300",
-      ring: "ring-yellow-200",
-      accent: "#fef3c7",
-      shadow: "shadow-yellow-200",
-      modalBorder: "border-yellow-100",
-    },
-  },
-};
+import THEMES, { CHARACTERS } from "./config/themes";
 
 // --- Firebase Configuration ---
 // Prioritizes environment variables for secure Git deployments
@@ -161,7 +118,216 @@ const playSoundEffect = (type) => {
       osc.start();
       osc.stop(ctx.currentTime + 0.4);
     }
-  } catch (e) {}
+  } catch {
+    // ignore
+  }
+};
+
+const AdminModal = ({ allUsers, onClose, onSave }) => {
+  const [newEmail, setNewEmail] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newRole, setNewRole] = useState("parent");
+  const [selectedKids, setSelectedKids] = useState([]);
+  const [newTheme, setNewTheme] = useState("pinky-girl");
+  const [newCharacter, setNewCharacter] = useState("cat");
+
+  const kidOptions = useMemo(() => {
+    const list = [];
+    if (!allUsers) return list;
+    for (const email in allUsers) {
+      if (allUsers[email]?.role === "girl") {
+        list.push({ email, name: allUsers[email].name });
+      }
+    }
+    return list;
+  }, [allUsers]);
+
+  const handleSave = () => {
+    if (!newEmail || !newName) return;
+    onSave(newEmail.toLowerCase(), {
+      name: newName,
+      role: newRole,
+      kids: newRole === "parent" ? selectedKids : [],
+      theme: newRole === "girl" ? newTheme : null,
+      character: newRole === "girl" ? newCharacter : null,
+    });
+
+    setNewEmail("");
+    setNewName("");
+    setSelectedKids([]);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+      <div className="bg-white rounded-[40px] p-8 w-full max-w-2xl shadow-2xl border-8 border-slate-100 max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-8">
+          <h2 className="text-2xl font-black text-slate-800 italic flex items-center gap-2">
+            <ShieldCheck className="text-slate-400" /> Admin Dashboard
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-slate-300 hover:text-rose-500"
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-8">
+          <div className="space-y-6">
+            <div className="p-6 bg-slate-50 rounded-[32px] border-2 border-slate-100">
+              <h3 className="text-xs font-black uppercase text-slate-400 tracking-widest mb-4 flex items-center gap-2">
+                <UserPlus size={14} /> Add New User
+              </h3>
+              <div className="space-y-4">
+                <input
+                  type="email"
+                  placeholder="Email"
+                  className="w-full p-4 rounded-xl bg-white border-2 font-bold text-sm"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                />
+                <input
+                  type="text"
+                  placeholder="Name"
+                  className="w-full p-4 rounded-xl bg-white border-2 font-bold text-sm"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                />
+                <select
+                  className="w-full p-4 rounded-xl bg-white border-2 font-bold text-sm"
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value)}
+                >
+                  <option value="parent">Parent</option>
+                  <option value="girl">Kid</option>
+                </select>
+
+                {newRole === "parent" && (
+                  <div className="pt-2">
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-2 mb-2 block">
+                      Associate Kids
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {kidOptions.map((k) => (
+                        <button
+                          key={k.email}
+                          onClick={() => {
+                            setSelectedKids((prev) =>
+                              prev.includes(k.email)
+                                ? prev.filter((e) => e !== k.email)
+                                : [...prev, k.email],
+                            );
+                          }}
+                          className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border-2 ${selectedKids.includes(k.email) ? "bg-slate-800 text-white border-transparent shadow-md" : "bg-white text-slate-400 border-slate-100"}`}
+                        >
+                          {k.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {newRole === "girl" && (
+                  <div className="space-y-4 pt-2 border-t border-slate-200">
+                    <div>
+                      <label className="text-[10px] font-black uppercase text-slate-400 ml-2 mb-2 block">
+                        Initial Theme
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.keys(THEMES).map((t) => (
+                          <button
+                            key={t}
+                            onClick={() => setNewTheme(t)}
+                            className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border-2 ${newTheme === t ? `${THEMES[t].colors.btn} text-white border-transparent` : "bg-white text-slate-400 border-slate-100"}`}
+                          >
+                            {t.replace("-", " ")}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black uppercase text-slate-400 ml-2 mb-2 block">
+                        Initial Companion
+                      </label>
+                      <div className="grid grid-cols-6 gap-1">
+                        {Object.entries(CHARACTERS).map(([id, char]) => {
+                          const CharIcon = char.icon;
+                          return (
+                            <button
+                              key={id}
+                              onClick={() => setNewCharacter(id)}
+                              className={`p-2 rounded-xl border-2 transition-all flex flex-col items-center ${newCharacter === id ? "border-slate-800 bg-slate-100" : "border-slate-100 opacity-40 grayscale"}`}
+                            >
+                              <CharIcon
+                                size={20}
+                                className={
+                                  newCharacter === id
+                                    ? "text-slate-800"
+                                    : "text-slate-400"
+                                }
+                              />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleSave}
+                  className="w-full py-4 bg-slate-800 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg hover:bg-slate-900 transition-all active:scale-95 mt-2"
+                >
+                  Register User
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <h3 className="text-xs font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
+              <Users size={14} /> Registered Users
+            </h3>
+            <div className="space-y-3">
+              {Object.entries(allUsers).map(([email, u]) => {
+                if (!u) return null;
+                return (
+                  <div
+                    key={email}
+                    className="p-4 bg-white border-2 border-slate-50 rounded-2xl flex justify-between items-center group"
+                  >
+                    <div>
+                      <p className="font-black text-slate-700 text-sm">
+                        {u.name}
+                        <span className="ml-2 text-[8px] font-bold uppercase text-slate-300 bg-slate-50 px-1.5 py-0.5 rounded">
+                          {u.role}
+                        </span>
+                      </p>
+                      <p className="text-[10px] font-bold text-slate-400">
+                        {email}
+                      </p>
+                      {u.kids?.length > 0 && (
+                        <div className="flex gap-1 mt-1">
+                          {u.kids.map((ke) => (
+                            <div
+                              key={ke}
+                              className="text-[8px] font-black text-pink-400 bg-pink-50 px-1 rounded"
+                            >
+                              {allUsers[ke]?.name || ke}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const App = () => {
@@ -184,10 +350,10 @@ const App = () => {
   const [actingAsKid, setActingAsKid] = useState(false);
   const [showMoreButtons, setShowMoreButtons] = useState(false);
   const [customThemes, setCustomThemes] = useState({});
-  const [editTheme, setEditTheme] = useState("girl-piano");
-
-
-
+  const [editTheme, setEditTheme] = useState("pinky-girl");
+  const [editCharacter, setEditCharacter] = useState("cat");
+  const [dynamicUsers, setDynamicUsers] = useState({});
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
 
   const [editGoalName, setEditGoalName] = useState("");
   const [editWeeks, setEditWeeks] = useState(4);
@@ -200,26 +366,49 @@ const App = () => {
 
   const [selectedKidEmail, setSelectedKidEmail] = useState(null);
 
+  const isAdmin = useMemo(() => {
+    const email = user?.email?.toLowerCase();
+    return email === "trdung87@gmail.com" || email === "hotrdung@gmail.com";
+  }, [user]);
+
+  const allUsers = useMemo(() => {
+    return { ...ALLOWED_USERS, ...dynamicUsers };
+  }, [dynamicUsers]);
+
   const selectedKidConfig = useMemo(() => {
     if (!selectedKidEmail) return null;
-    const base = ALLOWED_USERS[selectedKidEmail];
+    const email = selectedKidEmail.toLowerCase();
+    const base = allUsers[email] || {};
+    const prefs = customThemes[email] || {};
     return {
       ...base,
-      theme: customThemes[selectedKidEmail.toLowerCase()] || base?.theme,
+      theme: prefs.theme || base?.theme || "pinky-girl",
+      character: prefs.character || base?.character || "cat",
     };
-  }, [selectedKidEmail, customThemes]);
+  }, [selectedKidEmail, customThemes, allUsers]);
 
   const effectiveUserConfig = useMemo(() => {
     if (!userConfig || !user?.email) return userConfig;
     const email = user.email.toLowerCase();
-    return { ...userConfig, theme: customThemes[email] || userConfig?.theme };
-  }, [userConfig, customThemes, user]);
+    const base = allUsers[email] || userConfig;
+    const prefs = customThemes[email] || {};
+    return {
+      ...base,
+      theme: prefs.theme || base?.theme || "pinky-girl",
+      character: prefs.character || base?.character || "cat",
+    };
+  }, [userConfig, customThemes, user, allUsers]);
+
+  const CurrentCharacter = useMemo(() => {
+    const config = role === "parent" ? selectedKidConfig : effectiveUserConfig;
+    const charKey = config?.character || "cat";
+    return CHARACTERS[charKey]?.icon || CHARACTERS["cat"].icon;
+  }, [role, selectedKidConfig, effectiveUserConfig]);
 
   const currentTheme = useMemo(() => {
     const config = role === "parent" ? selectedKidConfig : effectiveUserConfig;
-    return THEMES[config?.theme] || THEMES["girl-piano"];
+    return THEMES[config?.theme] || THEMES["pinky-girl"];
   }, [role, selectedKidConfig, effectiveUserConfig]);
-
 
   const storageKey = useMemo(() => {
     if (!user?.email) return null;
@@ -232,19 +421,31 @@ const App = () => {
   }, [user, selectedKidEmail]);
 
   useEffect(() => {
-    if (!document.getElementById("tailwind-cdn")) {
-      const script = document.createElement("script");
-      script.id = "tailwind-cdn";
-      script.src = "https://cdn.tailwindcss.com";
-      document.head.appendChild(script);
-    }
+    const usersRef = collection(db, "artifacts", appId, "user_registry");
+    const unsubUsers = onSnapshot(
+      usersRef,
+
+      (snap) => {
+        const dynamic = {};
+        snap.docs.forEach((d) => {
+          dynamic[d.id] = d.data();
+        });
+        setDynamicUsers(dynamic);
+      },
+      (err) => console.error("Users sync failed:", err),
+    );
+
+    return () => unsubUsers();
   }, []);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
       setUser(u);
       if (u?.email) {
-        const config = ALLOWED_USERS[u.email.toLowerCase()];
+        const email = u.email.toLowerCase();
+        // Check both lists
+        const config =
+          ALLOWED_USERS[email] || dynamicUsers[email.replace(/[@.]/g, "_")];
         if (config) {
           setUserConfig(config);
           setRole(config.role);
@@ -262,7 +463,7 @@ const App = () => {
         setRole(null);
       }
     });
-  }, []);
+  }, [dynamicUsers]);
 
   useEffect(() => {
     if (!user || !storageKey) return;
@@ -282,14 +483,14 @@ const App = () => {
     const unsubPrefs = onSnapshot(prefsRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data.theme) {
-          setCustomThemes((prev) => ({ ...prev, [email]: data.theme }));
-        }
+        setCustomThemes((prev) => ({
+          ...prev,
+          [email]: { theme: data.theme, character: data.character },
+        }));
       }
     });
 
     const goalRef = collection(
-
       db,
       "artifacts",
       appId,
@@ -340,18 +541,18 @@ const App = () => {
     };
   }, [user, storageKey, role, selectedKidEmail]);
 
-
   useEffect(() => {
     if (showSettings) {
-      const config = role === "parent" ? selectedKidConfig : effectiveUserConfig;
+      const config =
+        role === "parent" ? selectedKidConfig : effectiveUserConfig;
       if (config) {
-        setEditKidName(config.name);
-        setEditTheme(config.theme || "girl-piano");
+        setEditTheme(config.theme || "pinky-girl");
+        setEditCharacter(config.character || "cat");
+        setEditGoalName(goal?.songName || "");
+        setEditKidName(config.name || "");
       }
     }
-  }, [showSettings, role, selectedKidConfig, effectiveUserConfig]);
-
-
+  }, [showSettings, role, selectedKidConfig, effectiveUserConfig, goal]);
 
   const fetchFullAudio = useCallback(
     async (dayId) => {
@@ -470,7 +671,7 @@ const App = () => {
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
-    } catch {
+    } catch (err) {
       console.error(err);
     }
   };
@@ -497,10 +698,11 @@ const App = () => {
         "settings",
         "preferences",
       );
-      await updateDoc(prefsRef, { theme: editTheme }).catch(async () => {
-        // Create if doesn't exist
-        const { setDoc } = await import("firebase/firestore");
-        await setDoc(prefsRef, { theme: editTheme });
+      await updateDoc(prefsRef, {
+        theme: editTheme,
+        character: editCharacter,
+      }).catch(async () => {
+        await setDoc(prefsRef, { theme: editTheme, character: editCharacter });
       });
 
       if (role === "parent" && goal) {
@@ -526,7 +728,6 @@ const App = () => {
       playSoundEffect("fail");
     }
   };
-
 
   const saveFeedback = async () => {
     if (role !== "parent" || !selectedDay || !storageKey) return;
@@ -563,7 +764,7 @@ const App = () => {
       if (selectedDay?.id === dayId) {
         setSelectedDay({ ...selectedDay, rating });
       }
-    } catch {
+    } catch (err) {
       console.error(err);
     }
   };
@@ -698,7 +899,7 @@ const App = () => {
         }
 
         playSoundEffect("success");
-      } catch {
+      } catch (err) {
         console.error(err);
       } finally {
         setIsUploading(false);
@@ -761,7 +962,7 @@ const App = () => {
       link.download = `piano_backup_${goal?.songName || "practice"}.json`;
       link.click();
       playSoundEffect("success");
-    } catch {
+    } catch (err) {
       console.error(err);
       playSoundEffect("fail");
     } finally {
@@ -789,14 +990,14 @@ const App = () => {
             ),
           );
         }
-        const { id: oldGoalId, ...goalToImport } = data.goal;
+        const { ...goalToImport } = data.goal;
         const newGoalRef = doc(
           collection(db, "artifacts", appId, "users", storageKey, "goals"),
         );
         batch.set(newGoalRef, goalToImport);
         await batch.commit();
         for (const day of data.days) {
-          const { id: oldDayId, audioData: oldAudioData, ...dayToImport } = day;
+          const { audioData: oldAudioData, ...dayToImport } = day;
           const dayRef = await addDoc(
             collection(db, "artifacts", appId, "users", storageKey, "days"),
             { ...dayToImport, goalId: newGoalRef.id, hasAudio: !!oldAudioData },
@@ -905,7 +1106,7 @@ const App = () => {
     const tStr = new Date().toLocaleDateString();
     let currentStatus = null;
 
-    const rawPath = days.map((d, i) => {
+    const rawPath = days.map((d) => {
       if (d.dateString === tStr) currentStatus = d.status;
       if (d.status === "completed") level++;
       else missed++;
@@ -1022,10 +1223,11 @@ const App = () => {
           className={`bg-white/90 backdrop-blur-sm p-10 rounded-[40px] shadow-2xl text-center w-full max-w-sm border-8 ${currentTheme.colors.modalBorder} animate-in zoom-in z-10`}
         >
           <div className="relative mb-8">
-            <currentTheme.character
-              size={80}
-              className={`mx-auto ${currentTheme.colors.text400} animate-bounce`}
+            <CurrentCharacter
+              size={120}
+              className={`${currentTheme.colors.text500} drop-shadow-2xl opacity-10`}
             />
+
             <div className="absolute -top-2 -right-2">
               <Sparkles size={24} className="text-yellow-400 animate-pulse" />
             </div>
@@ -1033,7 +1235,7 @@ const App = () => {
           <h1
             className={`text-3xl font-black ${currentTheme.colors.text} mb-2 italic leading-tight`}
           >
-            Sky Path Tracker
+            Sky Path
           </h1>
           <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-8">
             Login to start your journey
@@ -1115,17 +1317,18 @@ const App = () => {
       {/* Header */}
       {!loading && role && (
         <div
-          className={`fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-md border-b-2 ${currentTheme.colors.modalBorder} shadow-md transition-all duration-300`}
+          className={`fixed top-0 left-0 right-0 z-[50] bg-white/90 backdrop-blur-md border-b-2 ${currentTheme.colors.modalBorder} shadow-md transition-all duration-300`}
         >
-          {role === "parent" && userConfig.kids?.length > 1 && (
+          {role === "parent" && userConfig?.kids?.length > 1 && (
             <div className="px-3 pt-3 pb-1 flex justify-between items-center gap-4">
               <div className="flex gap-2 overflow-x-auto no-scrollbar flex-1">
-                {userConfig.kids.map((kidEmail) => {
-                  const kid = ALLOWED_USERS[kidEmail];
+                {userConfig?.kids?.map((kidEmail) => {
+                  const kid = allUsers[kidEmail.toLowerCase()];
                   const isSelected = selectedKidEmail === kidEmail;
                   const KidIcon = kid?.theme
                     ? THEMES[kid.theme].instrument
                     : Music;
+
                   return (
                     <button
                       key={kidEmail}
@@ -1170,7 +1373,7 @@ const App = () => {
           )}
 
           <div
-            className={`p-3 flex justify-between items-center gap-2 ${role === "parent" && userConfig.kids?.length > 1 ? "border-t border-slate-50" : ""}`}
+            className={`p-3 flex justify-between items-center gap-2 ${role === "parent" && userConfig?.kids?.length > 1 ? "border-t border-slate-50" : ""}`}
           >
             <div className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden">
               <div
@@ -1178,25 +1381,25 @@ const App = () => {
               >
                 <currentTheme.instrument size={18} />
               </div>
-              <div className="leading-tight flex-1 min-w-0 overflow-hidden relative group">
-                <div className="whitespace-nowrap marquee inline-block">
-                  <h1
-                    className={`text-sm font-black ${currentTheme.colors.text} inline-block pr-8`}
+              <div className="leading-tight flex-1 min-w-0 overflow-hidden relative">
+                <div className="whitespace-nowrap marquee flex">
+                  <span
+                    className={`text-xs font-black ${currentTheme.colors.text} uppercase tracking-tight pr-8`}
                   >
                     {goal ? goal.songName : "Welcome!"}
-                  </h1>
+                  </span>
                   {goal && (
-                    <h1
-                      className={`text-sm font-black ${currentTheme.colors.text} inline-block pr-8`}
+                    <span
+                      className={`text-xs font-black ${currentTheme.colors.text} uppercase tracking-tight pr-8`}
                     >
                       {goal.songName}
-                    </h1>
+                    </span>
                   )}
                 </div>
                 <p className="text-[9px] uppercase font-bold text-slate-400 tracking-wider truncate">
                   {(role === "parent"
                     ? selectedKidConfig?.name
-                    : userConfig?.name) || "Student"}
+                    : effectiveUserConfig?.name) || "Student"}
                   's Sky Path
                 </p>
               </div>
@@ -1244,11 +1447,9 @@ const App = () => {
         </div>
       )}
 
-
-
       {/* Configuration Modal */}
       {showSettings && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
           <div className="bg-white rounded-[40px] p-8 w-full max-w-md shadow-2xl border-8 border-blue-100 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-black text-blue-600 italic">
@@ -1266,106 +1467,137 @@ const App = () => {
                 <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1">
                   Appearance
                 </h3>
-                <div className="space-y-3">
-                  <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
-                    Choose Theme
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {Object.entries(THEMES).map(([id, t]) => (
-                      <button
-                        key={id}
-                        onClick={() => setEditTheme(id)}
-                        className={`p-4 rounded-2xl border-4 transition-all flex flex-col items-center gap-2 ${editTheme === id ? `border-${t.primary}-400 bg-${t.primary}-50 scale-105 shadow-md` : "border-slate-100 grayscale opacity-60 hover:grayscale-0 hover:opacity-100"}`}
-                      >
-                        <t.character
-                          size={32}
-                          className={
-                            editTheme === id
-                              ? `text-${t.primary}-500`
-                              : "text-slate-300"
-                          }
-                        />
-                        <span
-                          className={`text-[10px] font-black uppercase ${editTheme === id ? `text-${t.primary}-600` : "text-slate-400"}`}
-                        >
-                          {id.replace("-", " ")}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-4">
-                <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1">
-                  Personal Info
-                </h3>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
-                    Kid's Name
-                  </label>
-                  <input
-                    type="text"
-                    className="w-full p-4 rounded-xl bg-slate-50 border-2 font-bold"
-                    value={editKidName}
-                    disabled={role !== "parent"}
-                    onChange={(e) => setEditKidName(e.target.value)}
-                  />
-                </div>
-              </div>
-              {goal && (
                 <div className="space-y-4">
-                  <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1">
-                    Active Mission
-                  </h3>
                   <div>
-                    <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
-                      Goal Name (Activity or Song)
+                    <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase mb-2 block">
+                      Choose Theme
                     </label>
-                    <input
-                      type="text"
-                      className={`w-full p-4 rounded-xl ${currentTheme.colors.bg50} border-2 ${currentTheme.colors.modalBorder} font-bold`}
-                      value={editGoalName}
-                      onChange={(e) => setEditGoalName(e.target.value)}
-                    />
+                    <div className="grid grid-cols-2 gap-3">
+                      {Object.entries(THEMES).map(([id, t]) => (
+                        <button
+                          key={id}
+                          onClick={() => setEditTheme(id)}
+                          className={`p-4 rounded-2xl border-4 transition-all flex flex-col items-center gap-2 ${editTheme === id ? `${t.colors.border} ${t.colors.bg50} scale-105 shadow-md` : "border-slate-100 grayscale opacity-60 hover:grayscale-0 hover:opacity-100"}`}
+                        >
+                          <div
+                            className={`w-8 h-8 rounded-full ${t.colors.btn} shadow-inner`}
+                          />
+                          <span
+                            className={`text-[10px] font-black uppercase ${editTheme === id ? t.colors.text : "text-slate-400"}`}
+                          >
+                            {id.replace("-", " ")}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
-                        Target Weeks
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full p-4 rounded-xl bg-slate-50 border-2"
-                        value={editWeeks}
-                        onChange={(e) => setEditWeeks(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
-                        Max Score
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full p-4 rounded-xl bg-slate-50 border-2"
-                        value={editScore}
-                        onChange={(e) => setEditScore(e.target.value)}
-                      />
-                    </div>
-                  </div>
                   <div>
-                    <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
-                      Late Penalty / Day
+                    <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase mb-2 block">
+                      Choose Companion
                     </label>
-                    <input
-                      type="number"
-                      className="w-full p-4 rounded-xl bg-slate-50 border-2"
-                      value={editPenalty}
-                      onChange={(e) => setEditPenalty(e.target.value)}
-                    />
+                    <div className="grid grid-cols-4 gap-2">
+                      {Object.entries(CHARACTERS).map(([id, char]) => (
+                        <button
+                          key={id}
+                          onClick={() => setEditCharacter(id)}
+                          className={`p-3 rounded-2xl border-4 transition-all flex flex-col items-center gap-1 ${editCharacter === id ? `${currentTheme.colors.border} ${currentTheme.colors.bg50} scale-105 shadow-md` : "border-slate-100 opacity-40 hover:opacity-100 grayscale"}`}
+                        >
+                          <char.icon
+                            size={24}
+                            className={
+                              editCharacter === id
+                                ? currentTheme.colors.text500
+                                : "text-slate-300"
+                            }
+                          />
+                          <span
+                            className={`text-[8px] font-black uppercase ${editCharacter === id ? currentTheme.colors.text : "text-slate-400"}`}
+                          >
+                            {char.name}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
+              </div>
+              {(role === "parent" || actingAsKid) && (
+                <>
+                  <div className="space-y-4">
+                    <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1">
+                      Personal Info
+                    </h3>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
+                        Kid's Name
+                      </label>
+                      <input
+                        type="text"
+                        className="w-full p-4 rounded-xl bg-slate-50 border-2 font-bold"
+                        value={editKidName}
+                        disabled={role !== "parent"}
+                        onChange={(e) => setEditKidName(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  {goal && (
+                    <div className="space-y-4">
+                      <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b pb-1">
+                        Active Mission
+                      </h3>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
+                          Goal Name (Activity or Song)
+                        </label>
+                        <input
+                          type="text"
+                          className={`w-full p-4 rounded-xl ${currentTheme.colors.bg50} border-2 ${currentTheme.colors.modalBorder} font-bold`}
+                          value={editGoalName}
+                          onChange={(e) => setEditGoalName(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
+                            Target Weeks
+                          </label>
+                          <input
+                            type="number"
+                            className="w-full p-4 rounded-xl bg-slate-50 border-2"
+                            value={editWeeks}
+                            onChange={(e) => setEditWeeks(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
+                            Max Score
+                          </label>
+                          <input
+                            type="number"
+                            className="w-full p-4 rounded-xl bg-slate-50 border-2"
+                            value={editScore}
+                            onChange={(e) => setEditScore(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">
+                          Late Penalty / Day
+                        </label>
+                        <input
+                          type="number"
+                          className="w-full p-4 rounded-xl bg-slate-50 border-2"
+                          value={editPenalty}
+                          onChange={(e) => setEditPenalty(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
+
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={() => setShowSettings(false)}
@@ -1380,37 +1612,39 @@ const App = () => {
                   <Save size={18} /> Update Configuration
                 </button>
               </div>
-              <div className="pt-6 border-t space-y-4">
-                <h3 className="text-[10px] font-black uppercase text-rose-400 tracking-widest leading-none">
-                  Danger Zone
-                </h3>
-                <button
-                  onClick={() =>
-                    confirmState === "reset"
-                      ? resetEverything()
-                      : setConfirmState("reset")
-                  }
-                  className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${confirmState === "reset" ? "bg-rose-600 text-white animate-pulse" : "bg-rose-50 text-rose-500 hover:bg-rose-100"}`}
-                >
-                  {confirmState === "reset" ? (
-                    <>
-                      <AlertTriangle size={18} /> CONFIRM DELETE ALL DATA
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 size={18} /> Delete All Progress Data
-                    </>
-                  )}
-                </button>
-                {confirmState === "reset" && (
+              {(role === "parent" || actingAsKid) && (
+                <div className="pt-6 border-t space-y-4">
+                  <h3 className="text-[10px] font-black uppercase text-rose-400 tracking-widest leading-none">
+                    Danger Zone
+                  </h3>
                   <button
-                    onClick={() => setConfirmState(null)}
-                    className="w-full text-[10px] font-bold text-slate-400 uppercase tracking-widest"
+                    onClick={() =>
+                      confirmState === "reset"
+                        ? resetEverything()
+                        : setConfirmState("reset")
+                    }
+                    className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${confirmState === "reset" ? "bg-rose-600 text-white animate-pulse" : "bg-rose-50 text-rose-500 hover:bg-rose-100"}`}
                   >
-                    Cancel Reset
+                    {confirmState === "reset" ? (
+                      <>
+                        <AlertTriangle size={18} /> CONFIRM DELETE ALL DATA
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 size={18} /> Delete All Progress Data
+                      </>
+                    )}
                   </button>
-                )}
-              </div>
+                  {confirmState === "reset" && (
+                    <button
+                      onClick={() => setConfirmState(null)}
+                      className="w-full text-[10px] font-bold text-slate-400 uppercase tracking-widest"
+                    >
+                      Cancel Reset
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1512,10 +1746,11 @@ const App = () => {
           ) : (
             <div className="bg-white/90 backdrop-blur p-12 rounded-[50px] shadow-2xl border-8 border-pink-100 text-center animate-in zoom-in max-w-sm mx-auto mb-20">
               <div className="mb-6 relative">
-                <currentTheme.character
-                  size={80}
-                  className={`${currentTheme.colors.text400} mx-auto animate-bounce`}
+                <CurrentCharacter
+                  size={120}
+                  className={`${currentTheme.colors.text500} drop-shadow-2xl opacity-10`}
                 />
+
                 <Cloud
                   size={30}
                   className="absolute -top-4 -right-4 text-blue-200 animate-pulse"
@@ -1597,7 +1832,7 @@ const App = () => {
                       className={`absolute -top-14 left-[50%] -translate-x-1/2 z-10 ${catMood === "happy" ? "cat-fly-happy" : catMood === "sad" ? "cat-quiver-sad" : "animate-bounce"}`}
                     >
                       <div
-                        className={`bg-white p-2 rounded-full shadow-2xl border-4 ${currentTheme.colors.ring} relative`}
+                        className={`bg-white p-2 rounded-full shadow-2xl border-4 ${currentTheme.colors.border} relative`}
                       >
                         {catMood === "sad" ? (
                           <>
@@ -1607,7 +1842,7 @@ const App = () => {
                             </div>
                           </>
                         ) : (
-                          <currentTheme.character
+                          <CurrentCharacter
                             size={56}
                             className={`${currentTheme.colors.text500}`}
                           />
@@ -1808,13 +2043,19 @@ const App = () => {
                 </div>
               )}
 
-
               <button
                 onClick={() => setShowMoreButtons(!showMoreButtons)}
                 className={`w-14 h-14 ${showMoreButtons ? "bg-slate-600" : "bg-slate-400"} text-white rounded-full shadow-lg flex items-center justify-center transition-all active:scale-95`}
                 title="More Options"
               >
-                <MoreHorizontal size={28} className={showMoreButtons ? "rotate-90 transition-transform" : "transition-transform"} />
+                <MoreHorizontal
+                  size={28}
+                  className={
+                    showMoreButtons
+                      ? "rotate-90 transition-transform"
+                      : "transition-transform"
+                  }
+                />
               </button>
 
               <button
@@ -1833,6 +2074,16 @@ const App = () => {
                 <Cat size={32} />
               </button>
 
+              {isAdmin && (
+                <button
+                  onClick={() => setShowAdminPanel(true)}
+                  className="w-14 h-14 bg-slate-800 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all"
+                  title="Admin Panel"
+                >
+                  <ShieldCheck size={24} />
+                </button>
+              )}
+
               {confirmState && (
                 <button
                   onClick={() => setConfirmState(null)}
@@ -1842,7 +2093,6 @@ const App = () => {
                 </button>
               )}
             </div>
-
           )}
         </div>
       )}
@@ -2019,7 +2269,34 @@ const App = () => {
         </div>
       )}
 
+      {/* Admin Panel Modal */}
+      {showAdminPanel && isAdmin && (
+        <AdminModal
+          allUsers={allUsers}
+          onClose={() => setShowAdminPanel(false)}
+          onSave={async (userEmail, userData) => {
+            try {
+              const userRef = doc(
+                db,
+                "artifacts",
+                appId,
+                "user_registry",
+                userEmail.replace(/[@.]/g, "_"),
+              );
+
+              await updateDoc(userRef, userData).catch(async () => {
+                await setDoc(userRef, userData);
+              });
+              playSoundEffect("success");
+            } catch {
+              playSoundEffect("fail");
+            }
+          }}
+        />
+      )}
+
       <style>{`
+
         @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&display=swap');
         .handwriting { font-family: 'Caveat', cursive; }
         
