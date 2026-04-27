@@ -159,7 +159,7 @@ const AdminModal = ({ allUsers, onClose, onSave }) => {
 
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-      <div className="bg-white rounded-[40px] p-8 w-full max-w-2xl shadow-2xl border-8 border-slate-100 max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-[40px] p-8 w-full max-w-4xl shadow-2xl border-8 border-slate-100 max-h-[90vh] overflow-y-auto relative">
         <div className="flex justify-between items-center mb-8">
           <h2 className="text-2xl font-black text-slate-800 italic flex items-center gap-2">
             <ShieldCheck className="text-slate-400" /> Admin Dashboard
@@ -468,6 +468,9 @@ const App = () => {
   useEffect(() => {
     if (!user || !storageKey) return;
     setLoading(true);
+    // Reset state immediately to prevent mixing data between kids
+    setGoal(null);
+    setDays([]);
 
     const email =
       role === "parent" ? selectedKidEmail : user.email.toLowerCase();
@@ -498,7 +501,11 @@ const App = () => {
       storageKey,
       "goals",
     );
+    let unsubDays = null;
     const unsubGoal = onSnapshot(goalRef, (snap) => {
+      // Clean up previous days listener if goal changes
+      if (unsubDays) unsubDays();
+
       if (!snap.empty) {
         const goalData = { id: snap.docs[0].id, ...snap.docs[0].data() };
         setGoal(goalData);
@@ -515,7 +522,7 @@ const App = () => {
           storageKey,
           "days",
         );
-        const unsubDays = onSnapshot(daysRef, (daySnap) => {
+        unsubDays = onSnapshot(daysRef, (daySnap) => {
           const list = daySnap.docs
             .map((d) => ({ id: d.id, ...d.data() }))
             .filter((d) => d.goalId === goalData.id)
@@ -528,18 +535,19 @@ const App = () => {
           }
           setLoading(false);
         });
-        return () => unsubDays();
       } else {
         setGoal(null);
         setDays([]);
         setLoading(false);
       }
     });
+
     return () => {
       unsubGoal();
+      if (unsubDays) unsubDays();
       unsubPrefs();
     };
-  }, [user, storageKey, role, selectedKidEmail]);
+  };, [user, storageKey, role, selectedKidEmail]);
 
   useEffect(() => {
     if (showSettings) {
@@ -979,6 +987,10 @@ const App = () => {
         const data = JSON.parse(event.target.result);
         if (!data.goal || !data.days) throw new Error("Invalid Format");
         setLoading(true);
+        // Reset state to avoid stale data during import
+        setGoal(null);
+        setDays([]);
+
         const batch = writeBatch(db);
         if (goal) {
           batch.delete(
@@ -990,45 +1002,65 @@ const App = () => {
             ),
           );
         }
-        const { ...goalToImport } = data.goal;
+
+        const { id: _oldGoalId, ...goalToImport } = data.goal;
         const newGoalRef = doc(
           collection(db, "artifacts", appId, "users", storageKey, "goals"),
         );
         batch.set(newGoalRef, goalToImport);
         await batch.commit();
-        for (const day of data.days) {
-          const { audioData: oldAudioData, ...dayToImport } = day;
-          const dayRef = await addDoc(
-            collection(db, "artifacts", appId, "users", storageKey, "days"),
-            { ...dayToImport, goalId: newGoalRef.id, hasAudio: !!oldAudioData },
-          );
-          if (oldAudioData) {
-            const chunks = [];
-            for (let i = 0; i < oldAudioData.length; i += CHUNK_SIZE) {
-              chunks.push(oldAudioData.substring(i, i + CHUNK_SIZE));
-            }
-            for (let i = 0; i < chunks.length; i++) {
-              await addDoc(
-                collection(
-                  db,
-                  "artifacts",
-                  appId,
-                  "users",
-                  storageKey,
-                  "days",
-                  dayRef.id,
-                  "audioChunks",
+
+        // Parallelize day creation for better performance
+        await Promise.all(
+          data.days.map(async (day) => {
+            const {
+              id: _oldDayId,
+              audioData: oldAudioData,
+              goalId: _oldGid,
+              ...dayToImport
+            } = day;
+            const dayRef = await addDoc(
+              collection(db, "artifacts", appId, "users", storageKey, "days"),
+              {
+                ...dayToImport,
+                goalId: newGoalRef.id,
+                hasAudio: !!oldAudioData,
+              },
+            );
+
+            if (oldAudioData) {
+              const chunks = [];
+              for (let i = 0; i < oldAudioData.length; i += CHUNK_SIZE) {
+                chunks.push(oldAudioData.substring(i, i + CHUNK_SIZE));
+              }
+              // Upload chunks for this day in parallel
+              await Promise.all(
+                chunks.map((chunkData, index) =>
+                  addDoc(
+                    collection(
+                      db,
+                      "artifacts",
+                      appId,
+                      "users",
+                      storageKey,
+                      "days",
+                      dayRef.id,
+                      "audioChunks",
+                    ),
+                    { data: chunkData, index, timestamp: Date.now() },
+                  ),
                 ),
-                { data: chunks[i], index: i, timestamp: Date.now() },
               );
             }
-          }
-        }
+          }),
+        );
+
         playSoundEffect("success");
-        setRole(null);
-      } catch {
+        // Give listener time to sync before allowing auto-missed check
+        setTimeout(() => setLoading(false), 3000);
+      } catch (err) {
+        console.error(err);
         playSoundEffect("fail");
-      } finally {
         setLoading(false);
       }
     };
@@ -1106,7 +1138,20 @@ const App = () => {
     const tStr = new Date().toLocaleDateString();
     let currentStatus = null;
 
-    const rawPath = days.map((d) => {
+    // Deduplicate days by dateString, preferring 'completed' over 'missed'
+    const dayMap = new Map();
+    days.forEach((d) => {
+      const existing = dayMap.get(d.dateString);
+      if (!existing || d.status === "completed") {
+        dayMap.set(d.dateString, d);
+      }
+    });
+
+    const uniqueDays = Array.from(dayMap.values()).sort(
+      (a, b) => a.timestamp - b.timestamp,
+    );
+
+    const rawPath = uniqueDays.map((d) => {
       if (d.dateString === tStr) currentStatus = d.status;
       if (d.status === "completed") level++;
       else missed++;
@@ -1153,7 +1198,7 @@ const App = () => {
       todayStatus: currentStatus,
       todayStr: tStr,
     };
-  }, [days, goal]);
+  };, [days, goal]);
 
   const backgroundItems = useMemo(() => {
     const items = [];
@@ -1405,7 +1450,7 @@ const App = () => {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {role === "girl" && (
+              {(role === "girl" || actingAsKid) && (
                 <button
                   onClick={() => setIsMuted(!isMuted)}
                   className={`text-slate-400 hover:${currentTheme.colors.text500} p-2 bg-slate-100 rounded-full transition-colors`}
@@ -1417,6 +1462,7 @@ const App = () => {
                   )}
                 </button>
               )}
+
               {goal && (
                 <div
                   className={`px-3 py-1 rounded-full text-white font-black text-xs flex items-center gap-1 shadow-sm ${daysToDeadline < 0 ? "bg-rose-400" : "bg-emerald-400"}`}
@@ -1425,7 +1471,7 @@ const App = () => {
                   {goal.completed ? goal.finalScore : currentPotentialScore}
                 </div>
               )}
-              {role === "girl" && (
+              {(role === "girl" || actingAsKid) && (
                 <>
                   <button
                     onClick={() => setShowSettings(true)}
@@ -1449,8 +1495,8 @@ const App = () => {
 
       {/* Configuration Modal */}
       {showSettings && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-[40px] p-8 w-full max-w-md shadow-2xl border-8 border-blue-100 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-md animate-in fade-in">
+          <div className="bg-white rounded-[40px] p-10 w-full max-w-4xl shadow-2xl border-8 border-blue-100 max-h-[95vh] overflow-y-auto relative">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-black text-blue-600 italic">
                 Global Config
@@ -1652,7 +1698,7 @@ const App = () => {
 
       {/* Path */}
       <div
-        className={`pb-64 px-6 flex flex-col-reverse items-center relative max-w-lg mx-auto z-10 transition-all duration-300 ${role === "parent" && userConfig.kids?.length > 1 ? "pt-44" : "pt-32"}`}
+        className={`pb-64 px-6 flex flex-col-reverse items-center relative max-w-lg mx-auto z-10 transition-all duration-300 ${role === "parent" && userConfig.kids?.length > 1 ? "pt-52" : "pt-40"}`}
       >
         <div className="w-full text-center py-6 opacity-30">
           <div className="h-1 bg-green-300 rounded-full w-full mb-1"></div>
@@ -1998,14 +2044,14 @@ const App = () => {
           ) : (
             <div className="flex flex-col gap-3 items-end">
               {showMoreButtons && (
-                <div className="flex flex-row-reverse gap-3 mb-2 animate-in slide-in-from-right fade-in">
+                <div className="flex flex-col gap-3 mb-2 animate-in slide-in-from-bottom fade-in items-end">
                   <button
                     onClick={() =>
                       confirmState === "finalize"
                         ? finalizeGoal()
                         : setConfirmState("finalize")
                     }
-                    className={`w-14 h-14 ${confirmState === "finalize" ? "bg-green-500 animate-pulse" : "bg-yellow-400"} text-white rounded-full shadow-lg flex items-center justify-center transition-all`}
+                    className={`w-14 h-14 ${confirmState === "finalize" ? "bg-green-500 animate-pulse" : "bg-yellow-400"} text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95`}
                     title="Finalize Goal"
                   >
                     {confirmState === "finalize" ? (
@@ -2016,20 +2062,20 @@ const App = () => {
                   </button>
                   <button
                     onClick={() => setShowSettings(true)}
-                    className="w-14 h-14 bg-blue-500 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all"
+                    className="w-14 h-14 bg-blue-500 text-white rounded-full shadow-lg flex items-center justify-center hover:scale-110 active:scale-95 transition-all"
                     title="Configuration"
                   >
                     <Settings size={24} />
                   </button>
                   <button
                     onClick={exportData}
-                    className="w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all"
+                    className="w-14 h-14 bg-emerald-500 text-white rounded-full shadow-lg flex items-center justify-center hover:scale-110 active:scale-95 transition-all"
                     title="Backup"
                   >
                     <Download size={24} />
                   </button>
                   <label
-                    className="w-14 h-14 bg-indigo-500 text-white rounded-full shadow-lg flex items-center justify-center active:translate-y-1 transition-all cursor-pointer"
+                    className="w-14 h-14 bg-indigo-500 text-white rounded-full shadow-lg flex items-center justify-center hover:scale-110 active:scale-95 transition-all cursor-pointer"
                     title="Import Data"
                   >
                     <Upload size={24} />
@@ -2118,7 +2164,7 @@ const App = () => {
               {selectedDay.dateString}
             </p>
 
-            {role === "parent" && (
+            {role === "parent" && !actingAsKid && (
               <div className="space-y-4 mb-6">
                 {isTodayOrYesterday(selectedDay.dateString) &&
                   !selectedDay.id.startsWith("future") && (
@@ -2180,7 +2226,7 @@ const App = () => {
               </div>
             )}
 
-            {role === "girl" && selectedDay.comment && (
+            {(role === "girl" || actingAsKid) && selectedDay.comment && (
               <div
                 className={`mb-6 p-5 ${currentTheme.colors.bg50} rounded-[32px] border-2 ${currentTheme.colors.modalBorder} italic`}
               >
@@ -2214,7 +2260,7 @@ const App = () => {
                 >
                   <audio controls src={fullAudioData} className="w-full" />
                 </div>
-                {role === "parent" && (
+                {role === "parent" && !actingAsKid && (
                   <button
                     onClick={() => {
                       removeAudio(selectedDay.id);
@@ -2235,7 +2281,7 @@ const App = () => {
               </div>
             )}
 
-            {role === "girl" && !goal?.completed && (
+            {(role === "girl" || actingAsKid) && !goal?.completed && (
               <div className="mt-6">
                 <label
                   className={`w-full py-4 rounded-2xl font-black flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg ${isUploading ? "bg-slate-100 text-slate-400" : `${currentTheme.colors.btn} text-white ${currentTheme.colors.btnHover} active:scale-95`}`}
