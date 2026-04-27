@@ -547,7 +547,7 @@ const App = () => {
       if (unsubDays) unsubDays();
       unsubPrefs();
     };
-  };, [user, storageKey, role, selectedKidEmail]);
+  }, [user, storageKey, role, selectedKidEmail]);
 
   useEffect(() => {
     if (showSettings) {
@@ -640,9 +640,8 @@ const App = () => {
         const dateStr = currentCheck.toLocaleDateString();
         const exists = days.find((d) => d.dateString === dateStr);
         if (!exists) {
-          const newDayRef = doc(
-            collection(db, "artifacts", appId, "users", storageKey, "days"),
-          );
+          const dayId = dateStr.replace(/[/]/g, "_");
+          const newDayRef = doc(db, "artifacts", appId, "users", storageKey, "days", dayId);
           batch.set(newDayRef, {
             goalId: goal.id,
             status: "missed",
@@ -792,31 +791,20 @@ const App = () => {
       setTimeout(() => setEffect(null), 3000);
     }
     try {
+      const dayId = todayStr.replace(/[/]/g, "_");
+      const dayRef = doc(db, "artifacts", appId, "users", storageKey, "days", dayId);
+      
       const existingEntry = days.find((d) => d.dateString === todayStr);
       if (existingEntry) {
-        await updateDoc(
-          doc(
-            db,
-            "artifacts",
-            appId,
-            "users",
-            storageKey,
-            "days",
-            existingEntry.id,
-          ),
-          { status, timestamp: Date.now() },
-        );
+        await updateDoc(dayRef, { status, timestamp: Date.now() });
       } else {
-        await addDoc(
-          collection(db, "artifacts", appId, "users", storageKey, "days"),
-          {
-            goalId: goal.id,
-            status,
-            timestamp: Date.now(),
-            dateString: todayStr,
-            hasAudio: false,
-          },
-        );
+        await setDoc(dayRef, {
+          goalId: goal.id,
+          status,
+          timestamp: Date.now(),
+          dateString: todayStr,
+          hasAudio: false,
+        }, { merge: true });
       }
     } catch {
       // ignore
@@ -864,17 +852,16 @@ const App = () => {
         let targetId = dayId;
         // If clicking a placeholder today cloud, create the record first
         if (dayId.startsWith("future")) {
-          const newDayRef = await addDoc(
-            collection(db, "artifacts", appId, "users", storageKey, "days"),
-            {
-              goalId: goal.id,
-              dateString: selectedDay.dateString,
-              status: "completed",
-              timestamp: Date.now(),
-              hasAudio: false,
-            },
-          );
-          targetId = newDayRef.id;
+          const dayDocId = selectedDay.dateString.replace(/[/]/g, "_");
+          const newDayRef = doc(db, "artifacts", appId, "users", storageKey, "days", dayDocId);
+          await setDoc(newDayRef, {
+            goalId: goal.id,
+            dateString: selectedDay.dateString,
+            status: "completed",
+            timestamp: Date.now(),
+            hasAudio: false,
+          }, { merge: true });
+          targetId = dayDocId;
         }
 
         const oldChunks = await getDocs(
@@ -980,37 +967,44 @@ const App = () => {
 
   const importData = (e) => {
     const file = e.target.files[0];
-    if (!file) return;
+    if (!file || !storageKey) return;
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
         const data = JSON.parse(event.target.result);
         if (!data.goal || !data.days) throw new Error("Invalid Format");
         setLoading(true);
-        // Reset state to avoid stale data during import
         setGoal(null);
         setDays([]);
 
-        const batch = writeBatch(db);
-        if (goal) {
-          batch.delete(
-            doc(db, "artifacts", appId, "users", storageKey, "goals", goal.id),
-          );
-          days.forEach((d) =>
-            batch.delete(
-              doc(db, "artifacts", appId, "users", storageKey, "days", d.id),
-            ),
-          );
-        }
+        // Robust cleanup: Fetch all existing goals and days for this storageKey from DB
+        const goalsRef = collection(db, "artifacts", appId, "users", storageKey, "goals");
+        const daysRef = collection(db, "artifacts", appId, "users", storageKey, "days");
+        
+        const [goalsSnap, daysSnap] = await Promise.all([
+          getDocs(goalsRef),
+          getDocs(daysRef)
+        ]);
+
+        // Delete all old goals
+        const cleanupBatch = writeBatch(db);
+        goalsSnap.forEach(g => cleanupBatch.delete(g.ref));
+        await cleanupBatch.commit();
+
+        // Delete all old days and their audio chunks to ensure a clean slate
+        await Promise.all(daysSnap.docs.map(async (d) => {
+          const chunksRef = collection(d.ref, "audioChunks");
+          const cSnap = await getDocs(chunksRef);
+          const cBatch = writeBatch(db);
+          cSnap.forEach(c => cBatch.delete(c.ref));
+          await cBatch.commit();
+          await deleteDoc(d.ref);
+        }));
 
         const { id: _oldGoalId, ...goalToImport } = data.goal;
-        const newGoalRef = doc(
-          collection(db, "artifacts", appId, "users", storageKey, "goals"),
-        );
-        batch.set(newGoalRef, goalToImport);
-        await batch.commit();
+        const newGoalRef = await addDoc(goalsRef, goalToImport);
 
-        // Parallelize day creation for better performance
+        // Import days using date-based IDs to prevent redundancy
         await Promise.all(
           data.days.map(async (day) => {
             const {
@@ -1019,14 +1013,16 @@ const App = () => {
               goalId: _oldGid,
               ...dayToImport
             } = day;
-            const dayRef = await addDoc(
-              collection(db, "artifacts", appId, "users", storageKey, "days"),
-              {
-                ...dayToImport,
-                goalId: newGoalRef.id,
-                hasAudio: !!oldAudioData,
-              },
-            );
+            
+            // Use dateString as a unique ID for the day record
+            const dayId = dayToImport.dateString.replace(/[/]/g, "_");
+            const dayRef = doc(daysRef, dayId);
+            
+            await setDoc(dayRef, {
+              ...dayToImport,
+              goalId: newGoalRef.id,
+              hasAudio: !!oldAudioData,
+            });
 
             if (oldAudioData) {
               const chunks = [];
@@ -1198,7 +1194,7 @@ const App = () => {
       todayStatus: currentStatus,
       todayStr: tStr,
     };
-  };, [days, goal]);
+  }, [days, goal]);
 
   const backgroundItems = useMemo(() => {
     const items = [];
