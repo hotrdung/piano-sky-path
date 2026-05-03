@@ -65,6 +65,7 @@ import {
   Users,
   UserPlus,
   ShieldCheck,
+  Snowflake,
 } from "lucide-react";
 
 import ALLOWED_USERS from "./config/users.json";
@@ -776,6 +777,23 @@ const App = () => {
     }
   };
 
+  const toggleFreeze = async (day) => {
+    if (role !== "parent" || !storageKey || !day || day.id.startsWith("future")) return;
+    try {
+      const newStatus = day.status === "freeze" ? "missed" : "freeze";
+      await updateDoc(
+        doc(db, "artifacts", appId, "users", storageKey, "days", day.id),
+        { status: newStatus },
+      );
+      playSoundEffect("success");
+      if (selectedDay?.id === day.id) {
+        setSelectedDay({ ...selectedDay, status: newStatus });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const logPractice = async (status) => {
     if (!user || !goal || goal.completed) return;
     const todayStr = new Date().toLocaleDateString();
@@ -1122,6 +1140,7 @@ const App = () => {
   const {
     path,
     missedCount,
+    freezeCount,
     daysRemaining,
     currentPotentialScore,
     daysToDeadline,
@@ -1130,6 +1149,7 @@ const App = () => {
   } = useMemo(() => {
     let level = 0;
     let missed = 0;
+    let freezeCount = 0;
     const target = goal ? goal.targetWeeks * 7 : 0;
     const tStr = new Date().toLocaleDateString();
     let currentStatus = null;
@@ -1147,24 +1167,37 @@ const App = () => {
       (a, b) => a.timestamp - b.timestamp,
     );
 
+    let practiceDayNumber = 0;
     const rawPath = uniqueDays.map((d) => {
       if (d.dateString === tStr) currentStatus = d.status;
-      if (d.status === "completed") level++;
-      else missed++;
-      return { ...d, type: "recorded" };
+      if (d.status === "completed") {
+        level++;
+        practiceDayNumber++;
+      } else if (d.status === "freeze") {
+        freezeCount++;
+      } else {
+        missed++;
+        practiceDayNumber++;
+      }
+      return { 
+        ...d, 
+        type: "recorded", 
+        practiceDayNumber: d.status === "freeze" ? null : practiceDayNumber 
+      };
     });
 
     const futureDays = [];
     const futureCount = Math.max(0, target - level);
     for (let i = 1; i <= futureCount; i++) {
       const futureDateObj = new Date(goal?.startDate || Date.now());
-      futureDateObj.setDate(futureDateObj.getDate() + (level + missed + i - 1));
+      futureDateObj.setDate(futureDateObj.getDate() + (uniqueDays.length + i - 1));
       futureDays.push({
         id: `future-${i}`,
         status: "future",
         type: "future",
         dateString: futureDateObj.toLocaleDateString(),
         timestamp: futureDateObj.getTime(),
+        practiceDayNumber: practiceDayNumber + i,
       });
     }
 
@@ -1176,7 +1209,7 @@ const App = () => {
       return { ...item, xOffset: baseOffset + missedShift };
     });
 
-    const deadline = goal ? goal.startDate + target * 24 * 60 * 60 * 1000 : 0;
+    const deadline = goal ? goal.startDate + (target + freezeCount) * 24 * 60 * 60 * 1000 : 0;
     const dLeft = Math.ceil((deadline - Date.now()) / (1000 * 60 * 60 * 24));
     const score = goal
       ? Math.max(
@@ -1188,6 +1221,7 @@ const App = () => {
     return {
       path: finalPath,
       missedCount: missed,
+      freezeCount,
       daysRemaining: futureCount,
       currentPotentialScore: Math.round(score),
       daysToDeadline: dLeft,
@@ -1830,6 +1864,7 @@ const App = () => {
               const isCurrent = idx === days.length - 1;
               const isFuture = item.type === "future";
               const isMissed = item.status === "missed";
+              const isFreeze = item.status === "freeze";
               const hasAudio = item.hasAudio;
               const hasComment = !!item.comment;
 
@@ -1901,6 +1936,12 @@ const App = () => {
                           <CloudLightning size={14} fill="white" />{" "}
                           {missedCount} missed
                         </div>
+                        {freezeCount > 0 && (
+                          <div className="bg-blue-500 text-white px-3 py-1 rounded-xl flex items-center gap-2 text-[10px] font-black shadow-lg">
+                            <Snowflake size={14} fill="white" /> {freezeCount}{" "}
+                            frozen
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1909,7 +1950,7 @@ const App = () => {
                     onClick={() =>
                       (!isFuture || isTodayHighlight) && setSelectedDay(item)
                     }
-                    className={`relative cursor-pointer hover:scale-105 transition-transform ${isMissed ? "text-slate-400" : isTodayHighlight ? "text-yellow-400 animate-pulse" : isFuture ? "text-blue-200" : currentTheme.colors.cloud}`}
+                    className={`relative cursor-pointer hover:scale-105 transition-transform ${isMissed ? "text-slate-400" : isFreeze ? "text-blue-300" : isTodayHighlight ? "text-yellow-400 animate-pulse" : isFuture ? "text-blue-200" : currentTheme.colors.cloud}`}
                   >
                     <Cloud
                       size={100}
@@ -1933,6 +1974,11 @@ const App = () => {
                             size={24}
                             className="text-yellow-400"
                           />
+                        ) : isFreeze ? (
+                          <Snowflake
+                            size={24}
+                            className="text-white drop-shadow-md"
+                          />
                         ) : (
                           <currentTheme.instrument
                             size={24}
@@ -1949,7 +1995,7 @@ const App = () => {
                     >
                       {dateStrDisplay}
                       <br />
-                      Day {idx + 1}
+                      {item.practiceDayNumber ? `Day ${item.practiceDayNumber}` : "FREEZE"}
                     </div>
                     {item.rating && !isFuture && (
                       <div className="mt-1 flex gap-0.5 justify-center">
@@ -2218,6 +2264,16 @@ const App = () => {
                       </button>
                     </div>
                   </div>
+                )}
+
+                {!selectedDay.id.startsWith("future") && (selectedDay.status === "missed" || selectedDay.status === "freeze") && (
+                  <button
+                    onClick={() => toggleFreeze(selectedDay)}
+                    className={`w-full py-4 rounded-2xl font-black flex items-center justify-center gap-2 transition-all shadow-md ${selectedDay.status === "freeze" ? "bg-blue-500 text-white shadow-[0_6px_0_0_#1e40af] active:shadow-none active:translate-y-1" : "bg-blue-50 text-blue-500 border-2 border-blue-100"}`}
+                  >
+                    <Snowflake size={20} />
+                    {selectedDay.status === "freeze" ? "UNFREEZE DAY" : "FREEZE DAY"}
+                  </button>
                 )}
               </div>
             )}
